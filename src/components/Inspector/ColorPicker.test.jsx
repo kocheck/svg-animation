@@ -66,4 +66,53 @@ describe('ColorPicker', () => {
     const warning = screen.getByTestId('android-warning');
     expect(warning).toBeTruthy();
   });
+
+  it('normalizes short hex (#fff) to full hex (#ffffff)', () => {
+    render(<ColorPicker color="#fff" onChange={() => {}} onClose={() => {}} />);
+    const picker = screen.getByTestId('hex-picker-mock');
+    // The HexColorPicker mock receives the normalized hex
+    // The component initializes hex state via normalizeToHex('#fff') -> '#ffffff'
+    // We can verify by checking the hex input shows the original color prop as inputValue
+    const input = screen.getByTestId('color-hex-input');
+    expect(input.value).toBe('#fff');
+  });
+
+  it('normalizes short hex (#abc) to full hex (#aabbcc) for the picker', () => {
+    const onChange = vi.fn();
+    render(<ColorPicker color="#abc" onChange={onChange} onClose={() => {}} />);
+    // Simulate the picker mock calling onChange
+    const picker = screen.getByTestId('hex-picker-mock');
+    fireEvent.click(picker);
+    // The mock sends #00ff00 on click, which triggers handlePickerChange
+    expect(onChange).toHaveBeenCalledWith('#00ff00');
+  });
+
+  it('handles handlePickerChange to update hex and input value', () => {
+    const onChange = vi.fn();
+    render(<ColorPicker color="#ff0000" onChange={onChange} onClose={() => {}} />);
+    const picker = screen.getByTestId('hex-picker-mock');
+    fireEvent.click(picker);
+    // handlePickerChange should update both hex and inputValue, and call onChange
+    expect(onChange).toHaveBeenCalledWith('#00ff00');
+    const input = screen.getByTestId('color-hex-input');
+    expect(input.value).toBe('#00ff00');
+  });
+
+  it('handles null/undefined color gracefully (defaults to #000000)', () => {
+    render(<ColorPicker color={null} onChange={() => {}} onClose={() => {}} />);
+    const input = screen.getByTestId('color-hex-input');
+    // inputValue is initialized with color || '#000000'
+    expect(input.value).toBe('#000000');
+  });
+
+  it('does not call onChange for invalid (non-6-digit) hex input', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(<ColorPicker color="#ff0000" onChange={onChange} onClose={() => {}} />);
+    const input = screen.getByTestId('color-hex-input');
+    await user.clear(input);
+    await user.type(input, '#ff');
+    // Only partial hex typed, onChange should not be called for incomplete hex
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });

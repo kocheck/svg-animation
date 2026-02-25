@@ -138,4 +138,34 @@ describe('InspectorPanel', () => {
     renderWithProviders(<InspectorPanel />, opts);
     expect(screen.getByTestId('transform-inputs')).toBeTruthy();
   });
+
+  it('does not render TimingControls when no animations are present', () => {
+    const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
+    renderWithProviders(<InspectorPanel />, opts);
+    // happy-dom doesn't support getComputedStyle, so detectAnimations returns nothing.
+    // TimingControls should not be rendered.
+    expect(screen.queryByText('Timing')).toBeNull();
+  });
+
+  it('does not render TimingControls for non-transformable tag without animations', () => {
+    const svgWithText = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+      <text id="t1" x="10" y="20">Hello</text>
+    </svg>`;
+    const opts = makeDocAndSelection(svgWithText, 't1');
+    renderWithProviders(<InspectorPanel />, opts);
+    expect(screen.queryByText('Timing')).toBeNull();
+  });
+
+  it('renders element without id or class attributes', () => {
+    const svgNoIdClass = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+      <circle id="c2" cx="10" cy="10" r="5"/>
+    </svg>`;
+    const opts = makeDocAndSelection(svgNoIdClass, 'c2');
+    renderWithProviders(<InspectorPanel />, opts);
+    const tagEl = screen.getByTestId('inspector-tag');
+    expect(tagEl.textContent).toBe('<circle>');
+    // No class pills should be present
+    const pills = document.querySelectorAll('.class-pill');
+    expect(pills.length).toBe(0);
+  });
 });

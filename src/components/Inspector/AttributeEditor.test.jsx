@@ -99,4 +99,56 @@ describe('AttributeEditor', () => {
     const warning = screen.getByTestId('android-warning');
     expect(warning).toBeTruthy();
   });
+
+  it('reverts numeric attribute when given an invalid (non-numeric) value', async () => {
+    const user = userEvent.setup();
+    setup();
+    const valueCells = screen.getAllByTestId('attr-value');
+    // Double-click the 'r' attribute value (index 3: id=0, cx=1, cy=2, r=3)
+    await user.dblClick(valueCells[3]);
+    const input = screen.getByTestId('attr-edit-input');
+    await user.clear(input);
+    await user.type(input, 'notanumber');
+    await user.keyboard('{Enter}');
+    // Should exit edit mode (revert due to invalid numeric value)
+    expect(screen.queryByTestId('attr-edit-input')).toBeNull();
+  });
+
+  it('commits edit on blur (without pressing Enter)', async () => {
+    const user = userEvent.setup();
+    setup();
+    const valueCells = screen.getAllByTestId('attr-value');
+    // Double-click the 'r' attribute value (index 3)
+    await user.dblClick(valueCells[3]);
+    const input = screen.getByTestId('attr-edit-input');
+    await user.clear(input);
+    await user.type(input, '42');
+    // Blur the input instead of pressing Enter
+    await user.tab();
+    // Should exit edit mode
+    expect(screen.queryByTestId('attr-edit-input')).toBeNull();
+  });
+
+  it('commits enum select on change', async () => {
+    const user = userEvent.setup();
+    setup();
+    // stroke-linecap is the last attribute (index 6)
+    const valueCells = screen.getAllByTestId('attr-value');
+    await user.dblClick(valueCells[6]);
+    const select = screen.getByTestId('attr-edit-select');
+    await user.selectOptions(select, 'butt');
+    // After selecting, edit mode should close (setEditingAttr(null) in onChange)
+    expect(screen.queryByTestId('attr-edit-select')).toBeNull();
+  });
+
+  it('handles keyDown Escape on enum select', async () => {
+    const user = userEvent.setup();
+    setup();
+    const valueCells = screen.getAllByTestId('attr-value');
+    await user.dblClick(valueCells[6]);
+    const select = screen.getByTestId('attr-edit-select');
+    expect(select).toBeTruthy();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByTestId('attr-edit-select')).toBeNull();
+  });
 });
