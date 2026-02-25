@@ -6,7 +6,7 @@
 
 ## 1. Executive Summary
 
-We're evolving our lean SVG animation viewer into a dual-mode editing workbench where users can **manually tweak** any visual or animation property through direct-manipulation controls, **or describe changes in natural language** and let an AI apply them. The editing surface shares a single structured SVG model that both modes read and write, keeping output as portable, valid SVG at all times. The build-out is phased so that each milestone ships standalone value — starting with foundational infrastructure, then layering in visual controls, AI assistance, advanced timeline tools, and finally export/polish.
+We're evolving our lean SVG animation viewer into a dual-mode editing workbench where users can **manually tweak** any visual or animation property through direct-manipulation controls, **or use any AI client** (Claude Desktop, Raycast, Cursor, etc.) to drive edits via an MCP server that exposes the editor's capabilities as structured tools. The AI never lives inside the app — it connects from outside through MCP, keeping the editor focused on what it does best: visual SVG manipulation. Both manual controls and MCP tool calls share a single structured SVG model, keeping output as portable, valid SVG at all times. The build-out is phased so that each milestone ships standalone value — starting with foundational infrastructure, then layering in visual controls, MCP-powered AI integration, advanced timeline tools, and finally export/polish.
 
 ---
 
@@ -203,70 +203,186 @@ A panel of pre-built easing curves that users can click to apply to the selected
 
 ---
 
-## 5. Phase 3 — AI-Assisted Editing
+## 5. Phase 3 — AI-Assisted Editing via MCP Server
 
-**Goal:** Let users describe changes in natural language and have an LLM apply the corresponding SVG mutations.
+**Goal:** Expose the editor's capabilities as structured MCP tools so any AI client — Claude Desktop, Raycast, Cursor, Ollama-based tools, or anything that speaks MCP — can read, analyze, and mutate SVGs through the editor. The app stays focused as a visual editor; AI lives outside it.
 
-### P3-1: AI Chat Panel (Prompt Interface)
+### Architecture Overview
 
-A persistent side panel where users type natural-language instructions like "make the circle red" or "slow down the rotation by half."
+```
+┌──────────────────┐     MCP Protocol       ┌──────────────┐
+│  Claude Desktop  │    (stdio or SSE)       │              │
+│  Raycast AI      │◄──────────────────────►│  MCP Server  │
+│  Cursor          │                         │  (Node.js)   │
+│  Any MCP Client  │                         │              │
+└──────────────────┘                         └──────┬───────┘
+                                                    │
+                                               WebSocket
+                                              (localhost)
+                                                    │
+                                             ┌──────▼───────┐
+                                             │ Browser App  │
+                                             │ (React SPA)  │
+                                             └──────────────┘
+
+AI says: "call tool modify_element({ id: 'circle1', attrs: { fill: '#ff0000' } })"
+  → MCP Server relays to browser via WebSocket
+  → Browser applies to SvgDoc → pushes to undo history → re-renders
+  → Returns confirmation + updated element state to AI
+```
+
+### P3-1: WebSocket Bridge (Browser ↔ MCP Server)
+
+The glue layer. The browser app opens a persistent WebSocket connection to a local server. The server relays MCP tool calls to the browser and returns results.
 
 *Technical approach:*
-- Slide-in panel with a chat-style message list (user messages + AI responses).
-- Input field at the bottom with `Enter` to submit, `Shift+Enter` for newline.
-- Messages are stored in editor state: `{ role: 'user'|'assistant', content: string, diff?: SvgDiff }`.
-- The panel is always visible alongside the preview — no mode switching required. Users can interleave AI commands with manual edits seamlessly.
+- **Browser side:** A `useWebSocket` hook in the React app connects to `ws://localhost:<port>`. On receiving a message, it dispatches the requested action to `EditorContext` (same mutation pipeline as manual edits) and sends back the result. If the WebSocket isn't connected, the app works normally — MCP is purely additive.
+- **Server side:** A lightweight Node.js process (shipped as a separate `mcp-server/` package in the repo) that:
+  1. Registers as an MCP server (using `@modelcontextprotocol/sdk`).
+  2. Opens a WebSocket server on a configurable port (default 9500).
+  3. When the MCP client invokes a tool, forwards the call to the browser over WebSocket and relays the response back.
+- **Connection indicator:** A small status dot in the app toolbar — green when an MCP client is connected, gray when standalone.
 
 *Priority:* Must-have
 
-### P3-2: LLM Integration (SVG Mutation Pipeline)
+### P3-2: MCP Tool — `get_svg_source`
 
-The core engine: take a user prompt + current SVG → send to an LLM → receive modified SVG → apply the diff.
+Returns the full serialized SVG markup for the currently active animation.
 
 *Technical approach:*
-- **Prompt construction:** Build a system prompt that includes:
-  - The current serialized SVG (or a truncated/summarized version for large files).
-  - The element tree structure (tag names, IDs, classes) for context.
-  - Rules: "Output only the modified SVG. Maintain valid SVG XML. Do not add proprietary attributes."
-  - Android compatibility guidelines as soft constraints.
-- **API call:** POST to an LLM endpoint (configurable — could be OpenAI, Anthropic, or a local model). Abstract behind an `AiProvider` interface so the backend is swappable.
-- **Response handling:** Parse the returned SVG string, validate it with `DOMParser` (check for `parsererror`). If valid, compute a diff against the current SVG and show a preview. If invalid, show the error and let the user retry.
-- **Apply flow:** Show the AI's changes as a highlighted diff. User clicks "Accept" → changes are applied to `SvgDoc` and pushed to the undo history. User clicks "Reject" → changes are discarded.
+- Tool input: `{ index?: number }` (defaults to the active/focused SVG).
+- Tool output: `{ name: string, source: string, sizeBytes: number }`.
+- Browser handler: reads `SvgDoc.serialize()` from the active document in `EditorContext`.
 
 *Priority:* Must-have
 
-### P3-3: Contextual AI (Selection-Aware Prompts)
+### P3-3: MCP Tool — `get_element_tree`
 
-When an element is selected, scope the AI's context to that element so prompts like "make this bigger" or "change the color to blue" work without ambiguity.
+Returns the SVG's DOM structure as a JSON tree — tag names, IDs, classes, key attributes — so the AI can understand what it's working with without parsing raw XML.
 
 *Technical approach:*
-- If `selection` is non-null, inject the selected element's serialized subtree and its ID/path into the LLM prompt: "The user has selected `<circle id='c1' cx='200' cy='200' r='50' fill='red'/>`. Apply the following change to this element."
-- The AI returns a replacement for that subtree. We validate it, swap it into the `SvgDoc`, and push to history.
-- Show a visual indicator in the chat panel: "Editing: `<circle#c1>`".
+- Tool input: `{ depth?: number }` (default unlimited, but capped at 10 to keep token count manageable).
+- Tool output: recursive JSON: `{ tag: string, id?: string, class?: string, attrs: Record<string, string>, children: TreeNode[] }`.
+- Browser handler: walks the `SvgDoc` DOM and serializes. Strip verbose attributes like `d` (path data) by default — include only on request via an `includePathData: boolean` flag.
 
 *Priority:* Must-have
 
-### P3-4: AI Suggestion Mode (Proactive Recommendations)
+### P3-4: MCP Tool — `get_element_details`
 
-After analyzing the SVG, the AI suggests improvements — "This animation has no easing; want me to add ease-in-out?" or "These two paths could be merged."
+Deep-read a specific element by ID or CSS selector — returns all attributes, computed styles, animation state, and bounding box.
 
 *Technical approach:*
-- On SVG load or on-demand ("Analyze" button), send the SVG to the LLM with a prompt asking for optimization/improvement suggestions.
-- Display suggestions as dismissable cards in the AI panel, each with a one-click "Apply" button.
-- Suggestions are non-destructive — they queue proposed diffs that the user must explicitly accept.
+- Tool input: `{ selector: string }` (e.g., `"#circle1"`, `"path.outline"`, `"svg > g:nth-child(2)"`).
+- Tool output: `{ tag, id, attrs: Record<string,string>, computedStyle: Record<string,string>, animations: AnimationInfo[], bbox: { x, y, width, height } }`.
+- Browser handler: `SvgDoc.querySelector(selector)` → read attributes, call `getComputedStyle()`, call `getBBox()`.
+
+*Priority:* Must-have
+
+### P3-5: MCP Tool — `modify_element`
+
+Set, change, or remove attributes on a specific element. This is the primary mutation tool.
+
+*Technical approach:*
+- Tool input: `{ selector: string, set?: Record<string,string>, remove?: string[] }`.
+  - Example: `{ selector: "#circle1", set: { fill: "#ff0000", r: "80" }, remove: ["opacity"] }`.
+- Tool output: `{ success: boolean, element: { tag, id, attrs } }` (the element's state after mutation).
+- Browser handler: locate element via `SvgDoc.querySelector`, apply `setAttribute`/`removeAttribute`, push to history stack, re-render.
+- **Validation:** Reject obviously dangerous attributes (`onload`, `onclick` with `javascript:` URIs). Normalize color values to hex.
+
+*Priority:* Must-have
+*Android note:* The tool response should include an `androidWarnings: string[]` field listing any attributes the AI just set that are known to be unsupported on Android (e.g., `filter`, `clip-path`, `hsl()` colors). This lets the AI proactively warn the user.
+
+### P3-6: MCP Tool — `add_animation`
+
+Add a CSS animation to an element — injects a `@keyframes` block and sets the `animation` shorthand.
+
+*Technical approach:*
+- Tool input: `{ selector: string, keyframes: Record<string, Record<string, string>>, duration?: string, easing?: string, delay?: string, iterationCount?: string, name?: string }`.
+  - Example: `{ selector: "#circle1", keyframes: { "0%": { opacity: "0" }, "100%": { opacity: "1" } }, duration: "1s", easing: "ease-in" }`.
+- Tool output: `{ success: boolean, animationName: string }`.
+- Browser handler: auto-generate a unique `@keyframes` name (or use the provided one), inject the `@keyframes` block into the document's `<style>` element (create one if absent), set the `animation` shorthand on the target element.
+
+*Priority:* Must-have
+
+### P3-7: MCP Tool — `replace_svg`
+
+Replace the entire SVG source. The nuclear option for when the AI wants to make sweeping changes. Always validated before applying.
+
+*Technical approach:*
+- Tool input: `{ source: string, validateOnly?: boolean }`.
+- Tool output: `{ success: boolean, valid: boolean, parseErrors?: string[], elementCount: number, animationCount: number }`.
+- Browser handler: parse with `DOMParser`, check for `parsererror`. If `validateOnly` is true, return validation result without applying. Otherwise, replace the `SvgDoc`, push old state to undo history.
+- **Safety:** The tool always returns a diff summary (elements added/removed/changed) so the AI can confirm the change was what it intended.
+
+*Priority:* Must-have
+
+### P3-8: MCP Tool — `undo` / `redo`
+
+Navigate the history stack. Essential for AI error recovery — if a change looks wrong, the AI (or user) can immediately revert.
+
+*Technical approach:*
+- Tool input: `{ action: "undo" | "redo" }`.
+- Tool output: `{ success: boolean, historyDepth: number, canUndo: boolean, canRedo: boolean }`.
+- Browser handler: delegates directly to the `SvgHistory` module from Phase 1.
+
+*Priority:* Must-have
+
+### P3-9: MCP Tool — `list_animations`
+
+List all detected animations in the SVG with their properties — so the AI can reason about timing, sequencing, and conflicts.
+
+*Technical approach:*
+- Tool input: `{}` (no parameters).
+- Tool output: `{ animations: [{ element: string, type: "css"|"smil", name: string, duration: string, delay: string, easing: string, iterationCount: string, state: "running"|"paused" }] }`.
+- Browser handler: uses the generalized `AnimationDetector` from P1-4.
 
 *Priority:* Nice-to-have
 
-### P3-5: Prompt Templates / Quick Actions
+### P3-10: MCP Server Package & Setup
 
-Pre-built prompt shortcuts for common tasks: "Add a fade-in animation", "Center all elements", "Optimize path data", "Convert SMIL to CSS".
+Ship the MCP server as a self-contained package within the repo, with a simple setup flow.
 
 *Technical approach:*
-- A searchable palette of template buttons. Each template has a display name and a prompt string with `{{selection}}` placeholders filled at execution time.
-- Power users can create and save custom templates.
-- Accessible via a dropdown above the chat input or via the command palette (Phase 5).
+- Directory: `mcp-server/` at repo root, with its own `package.json`.
+- Dependencies: `@modelcontextprotocol/sdk`, `ws` (WebSocket library). Minimal footprint.
+- Entry point: `mcp-server/index.js` — runnable via `node mcp-server/index.js` or `npx svg-editor-mcp`.
+- **MCP client configuration:** Ship a sample `claude_desktop_config.json` snippet and a Raycast MCP config example in the README so users can connect in under a minute.
+- **Transport:** Support both `stdio` (for Claude Desktop, which launches the process directly) and `SSE` over HTTP (for network-based MCP clients). The WebSocket to the browser is always localhost.
+- **Zero-config default:** `npm run mcp` script in the root `package.json` starts the server. The browser app auto-connects when it detects the WebSocket is available.
 
-*Priority:* Nice-to-have
+*Priority:* Must-have
+
+### MCP Configuration Examples
+
+**Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):**
+```json
+{
+  "mcpServers": {
+    "svg-editor": {
+      "command": "node",
+      "args": ["/path/to/svg-animation/mcp-server/index.js"]
+    }
+  }
+}
+```
+
+**Raycast MCP Extension:**
+```json
+{
+  "name": "svg-editor",
+  "transport": "stdio",
+  "command": "node",
+  "args": ["/path/to/svg-animation/mcp-server/index.js"]
+}
+```
+
+**What users can say to their AI client after connecting:**
+- "Show me the element tree of my SVG"
+- "Make the circle red and slow down its animation to 3 seconds"
+- "Add a fade-in animation to every path element"
+- "What elements have animations? List them with their durations"
+- "Undo that last change"
+- "Replace the entire SVG with an optimized version"
 
 ---
 
@@ -418,33 +534,36 @@ Ensure the editor works on tablets and narrow viewports.
 ### Data Flow
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    EditorContext                         │
-│  ┌─────────┐   ┌───────────┐   ┌────────────────────┐  │
-│  │ Gallery  │   │ Selection │   │   UI Preferences   │  │
-│  │ svgs[]   │   │ elementId │   │ grid, speed, panel │  │
-│  └────┬─────┘   └─────┬─────┘   └────────────────────┘  │
-│       │               │                                  │
-│  ┌────▼─────────────────▼──────┐                         │
-│  │       Active SvgDoc         │◄─── Single source of    │
-│  │  (parsed DOM + serialize)   │     truth for the SVG   │
-│  └────┬────────────┬───────────┘                         │
-│       │            │                                     │
-│  ┌────▼────┐  ┌────▼─────┐                               │
-│  │ History │  │ Renderer │                               │
-│  │ undo[]  │  │ (HTML)   │                               │
-│  │ redo[]  │  └──────────┘                               │
-│  └─────────┘                                             │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                         EditorContext                                 │
+│  ┌─────────┐   ┌───────────┐   ┌──────────────┐   ┌─────────────┐  │
+│  │ Gallery  │   │ Selection │   │ UI Prefs     │   │ WebSocket   │  │
+│  │ svgs[]   │   │ elementId │   │ grid, speed  │   │ connection  │  │
+│  └────┬─────┘   └─────┬─────┘   └──────────────┘   └──────┬──────┘  │
+│       │               │                                    │         │
+│  ┌────▼─────────────────▼──────┐            ┌──────────────▼───────┐ │
+│  │       Active SvgDoc         │◄──────────►│   MCP Tool Handler  │ │
+│  │  (parsed DOM + serialize)   │  mutations  │   (dispatch actions)│ │
+│  └────┬────────────┬───────────┘            └──────────────────────┘ │
+│       │            │                                                 │
+│  ┌────▼────┐  ┌────▼─────┐                                          │
+│  │ History │  │ Renderer │                                          │
+│  │ undo[]  │  │ (HTML)   │                                          │
+│  │ redo[]  │  └──────────┘                                          │
+│  └─────────┘                                                         │
+└──────────────────────────────────────────────────────────────────────┘
 
-Mutation flow (both AI and manual):
+Mutation flow (both MCP and manual share the same pipeline):
 
-  User action ──► Mutation function ──► SvgDoc.update() ──► History.push()
-       │                                      │
-  AI prompt ────► LLM ──► validate ──► SvgDoc.replace() ──► History.push()
-                                              │
-                                              ▼
-                                     serialize() ──► re-render preview
+  Manual: User click ──► Mutation function ──► SvgDoc.update() ──► History.push()
+                                                     │
+  MCP:   AI tool call ──► WebSocket ──► dispatch ──► SvgDoc.update() ──► History.push()
+                                                     │
+                                                     ▼
+                                            serialize() ──► re-render preview
+                                                     │
+                                            WebSocket ──► MCP Server ──► AI client
+                                            (return updated state)
 ```
 
 ### Key Architectural Decisions
@@ -454,59 +573,73 @@ Mutation flow (both AI and manual):
 | **Browser `DOMParser` for SVG model** | Zero dependencies, handles all SVG including embedded `<style>` and `<script>`. More reliable than regex or third-party AST parsers. |
 | **`useReducer` + Context over Redux/Zustand** | App complexity is moderate. React's built-in primitives are sufficient and keep the zero-dependency philosophy. Revisit if state shape grows beyond ~10 top-level keys. |
 | **String-diff history over structural diff** | Serialized SVG strings are easy to compare, store, and restore. Structural diffing is complex and error-prone with SVG's namespace quirks. String snapshots with a 50-entry cap are memory-safe for typical SVGs (<100KB). |
-| **AI operates on full SVG strings, not AST commands** | LLMs are better at producing valid SVG markup than at generating programmatic AST mutation instructions. Validate LLM output with `DOMParser` before applying. |
-| **No TypeScript migration (yet)** | The codebase is JSX. Adding TS would be valuable long-term but is not a blocker for any phase. Consider migrating incrementally starting Phase 3 when the AI integration adds type complexity. |
+| **MCP server (external AI) over built-in chat panel** | Keeps the app focused as a visual editor. Users bring their own AI client (Claude Desktop, Raycast, Cursor). No API keys in the browser, no LLM vendor lock-in, no chat UI to maintain. MCP's structured tool calls are more reliable than asking an LLM to produce raw SVG strings. |
+| **WebSocket bridge for MCP ↔ browser** | MCP servers run as Node.js processes (stdio/SSE), but the editor state lives in the browser. WebSocket is the simplest reliable bridge — persistent, bidirectional, low-latency. Falls back gracefully (app works without it). |
+| **Structured MCP tools over raw SVG replacement** | Tools like `modify_element` and `add_animation` constrain what the AI can do, making mutations predictable and validatable. The `replace_svg` tool is the escape hatch for sweeping changes, but it always validates first. |
+| **No TypeScript migration (yet)** | The codebase is JSX. Adding TS would be valuable long-term but is not a blocker for any phase. Consider migrating incrementally starting Phase 3 when the MCP server adds type complexity (the MCP SDK has good TS support). |
 | **Inline styles over `<style>` blocks for per-element edits** | Inline styles are more predictable when elements are moved, copied, or exported. Reserve `<style>` block editing for `@keyframes` and global rules only. |
 
 ### Module Structure (Target)
 
 ```
-src/
-├── main.jsx
-├── App.jsx
-├── index.css
-├── context/
-│   └── EditorContext.jsx          # useReducer + Context provider
-├── model/
-│   ├── SvgDoc.js                  # SVG document model (parse, query, mutate, serialize)
-│   ├── SvgHistory.js              # Undo/redo stack
-│   └── AnimationDetector.js       # Generalized animation discovery
-├── components/
-│   ├── Header.jsx
-│   ├── Toolbar.jsx
-│   ├── Gallery.jsx
-│   ├── Card.jsx
-│   ├── CodeEditor.jsx
-│   ├── DropZone.jsx
-│   ├── FocusOverlay.jsx
-│   ├── Inspector/
-│   │   ├── InspectorPanel.jsx     # Attribute viewer/editor
-│   │   ├── ColorPicker.jsx
-│   │   ├── TransformHandles.jsx
-│   │   └── TimingControls.jsx
-│   ├── Timeline/
-│   │   ├── KeyframeEditor.jsx
-│   │   └── Sequencer.jsx
-│   ├── AI/
-│   │   ├── ChatPanel.jsx
-│   │   ├── PromptTemplates.jsx
-│   │   └── DiffPreview.jsx
-│   └── shared/
-│       ├── CommandPalette.jsx
-│       └── ElementTree.jsx
-├── ai/
-│   ├── AiProvider.js              # LLM API abstraction
-│   ├── promptBuilder.js           # System prompt construction
-│   └── responseValidator.js       # SVG output validation
-├── export/
-│   ├── svgOptimizer.js            # SVGO wrapper
-│   ├── vectorDrawable.js          # Android VD export
-│   └── animatedPreview.js         # GIF/WebM export
-└── hooks/
-    ├── useAnimation.js            # (existing, to be refactored)
-    ├── useSvgDocument.js
-    ├── useSvgHistory.js
-    └── useElementSelection.js
+svg-animation/
+├── src/                               # React app (browser)
+│   ├── main.jsx
+│   ├── App.jsx
+│   ├── index.css
+│   ├── context/
+│   │   └── EditorContext.jsx          # useReducer + Context provider
+│   ├── model/
+│   │   ├── SvgDoc.js                  # SVG document model (parse, query, mutate, serialize)
+│   │   ├── SvgHistory.js              # Undo/redo stack
+│   │   └── AnimationDetector.js       # Generalized animation discovery
+│   ├── mcp/
+│   │   ├── useWebSocket.js            # WebSocket connection hook
+│   │   ├── toolDispatcher.js          # Routes MCP tool calls → EditorContext actions
+│   │   └── connectionStatus.js        # Connection state (connected/disconnected)
+│   ├── components/
+│   │   ├── Header.jsx
+│   │   ├── Toolbar.jsx                # + MCP connection indicator
+│   │   ├── Gallery.jsx
+│   │   ├── Card.jsx
+│   │   ├── CodeEditor.jsx
+│   │   ├── DropZone.jsx
+│   │   ├── FocusOverlay.jsx
+│   │   ├── Inspector/
+│   │   │   ├── InspectorPanel.jsx     # Attribute viewer/editor
+│   │   │   ├── ColorPicker.jsx
+│   │   │   ├── TransformHandles.jsx
+│   │   │   └── TimingControls.jsx
+│   │   ├── Timeline/
+│   │   │   ├── KeyframeEditor.jsx
+│   │   │   └── Sequencer.jsx
+│   │   └── shared/
+│   │       ├── CommandPalette.jsx
+│   │       └── ElementTree.jsx
+│   ├── export/
+│   │   ├── svgOptimizer.js            # SVGO wrapper
+│   │   ├── vectorDrawable.js          # Android VD export
+│   │   └── animatedPreview.js         # GIF/WebM export
+│   └── hooks/
+│       ├── useAnimation.js            # (existing, to be refactored)
+│       ├── useSvgDocument.js
+│       ├── useSvgHistory.js
+│       └── useElementSelection.js
+│
+└── mcp-server/                        # MCP server (Node.js, separate process)
+    ├── package.json                   # deps: @modelcontextprotocol/sdk, ws
+    ├── index.js                       # Entry point, stdio + SSE transport
+    ├── tools/
+    │   ├── getSvgSource.js            # get_svg_source tool definition
+    │   ├── getElementTree.js          # get_element_tree tool definition
+    │   ├── getElementDetails.js       # get_element_details tool definition
+    │   ├── modifyElement.js           # modify_element tool definition
+    │   ├── addAnimation.js            # add_animation tool definition
+    │   ├── replaceSvg.js              # replace_svg tool definition
+    │   ├── listAnimations.js          # list_animations tool definition
+    │   └── undoRedo.js                # undo/redo tool definition
+    ├── bridge.js                      # WebSocket client → browser app
+    └── README.md                      # Setup instructions + config examples
 ```
 
 ---
@@ -532,11 +665,14 @@ src/
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| **LLM produces invalid SVG** | Broken rendering, data loss | Always validate with `DOMParser` before applying. Show parse errors to user. Never auto-apply without preview. |
+| **AI calls `replace_svg` with invalid SVG** | Broken rendering, data loss | `replace_svg` always validates with `DOMParser` before applying. Returns parse errors to the AI so it can self-correct. Structured tools like `modify_element` avoid this risk entirely by operating on individual attributes. |
 | **Large SVGs overwhelm the editor** | Slow rendering, high memory | Lazy-render the element tree. Virtualize long lists. Cap history stack. Show file size warnings above 500KB. |
 | **Undo history memory usage** | Browser tab crash on very large SVGs | Store diffs instead of full snapshots for SVGs over 100KB. Or compress snapshots with a lightweight algorithm. |
 | **CSS specificity conflicts between editor UI and SVG content** | SVG styles leak into editor, or vice versa | Render SVGs in a Shadow DOM container or `<iframe>` sandbox. At minimum, scope all editor CSS under a `.editor-*` namespace. |
 | **DOMParser namespace issues** | SVG elements not recognized correctly | Always parse with `'image/svg+xml'` MIME type. Handle the `parsererror` element that `DOMParser` inserts on failure. |
+| **WebSocket disconnects between MCP server and browser** | AI tool calls fail silently | Implement reconnection with exponential backoff. MCP server queues tool calls during brief disconnects (up to 5s). Return clear error to AI client if browser is unreachable. |
+| **MCP server port conflicts** | Server fails to start | Use a configurable port (default 9500) with automatic fallback to next available port. Write the active port to a `.mcp-port` file for the browser to discover. |
+| **Multiple browser tabs open** | MCP server doesn't know which tab to target | Only one tab maintains the WebSocket connection at a time. Subsequent tabs see a "controlled by another tab" indicator. Or: MCP server uses `activeTab` parameter on tool calls to target a specific gallery entry. |
 
 ---
 
@@ -547,8 +683,10 @@ src/
 | **Quick Wins** | — | In-place edit, copy, background toggle, metadata, shortcuts | None |
 | **Phase 1: Foundation** | — | SVG document model, undo/redo, element selection, animation detection, state management | None |
 | **Phase 2: Manual Editing** | — | Attribute editor, color picker, transform handles, timing controls, element tree, easing presets | Phase 1 |
-| **Phase 3: AI Editing** | — | Chat panel, LLM integration, selection-aware prompts, suggestions, prompt templates | Phase 1 |
+| **Phase 3: AI via MCP** | — | MCP server, WebSocket bridge, 8 structured tools (get/modify/animate/undo), connection indicator | Phase 1 |
 | **Phase 4: Advanced Tools** | — | Keyframe timeline, sequencer, path editor, interaction builder, animation presets | Phase 2 |
 | **Phase 5: Export & Polish** | — | SVG optimizer, VectorDrawable export, animated preview export, command palette, persistence, responsive layout | Phase 1+ |
 
-> **Phases 2 and 3 can be developed in parallel** — they both depend on Phase 1 but are independent of each other. Phase 4 depends on Phase 2. Phase 5 items can be sprinkled in alongside any phase (especially persistence, which is valuable early).
+> **Phases 2 and 3 can be developed in parallel** — they both depend on Phase 1 but are independent of each other. The MCP server (Phase 3) is a separate Node.js package with no dependency on the React component work in Phase 2. Phase 4 depends on Phase 2. Phase 5 items can be sprinkled in alongside any phase (especially persistence, which is valuable early).
+>
+> **MCP tools grow with the editor.** As Phase 2 adds capabilities (color picker, transform handles, timing controls), those same capabilities naturally become available through MCP — the tools call the same underlying mutation functions. No separate AI-specific work needed for each new editor feature.
