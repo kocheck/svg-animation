@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 800 600" width="800" height="600">
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:rgb(255,255,0);stop-opacity:1" />
+      <stop offset="100%" style="stop-color:rgb(255,0,0);stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <style>
+    @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.2); } }
+    .pulse { animation: pulse 1s ease-in-out infinite; transform-origin: center; }
+    .has-transition { transition: fill 0.3s ease; }
+  </style>
+  <g id="layer1">
+    <circle id="grad-circle" cx="400" cy="300" r="100" fill="url(#grad1)" class="pulse" />
+    <g id="nested">
+      <rect id="trans-rect" class="has-transition" x="50" y="50" width="200" height="100" fill="#336699" />
+      <path id="mypath" d="M10 80 C 40 10, 65 10, 95 80 S 150 150, 180 80" fill="none" stroke="#333" stroke-width="2" />
+    </g>
+  </g>
+  <text id="label" x="400" y="550" text-anchor="middle" font-size="24" fill="#333">Hello SVG</text>
+  <circle id="smil-circle" cx="600" cy="100" r="30" fill="green">
+    <animate attributeName="cy" from="100" to="500" dur="4s" repeatCount="indefinite" />
+  </circle>
+</svg>
