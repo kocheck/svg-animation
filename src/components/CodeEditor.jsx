@@ -1,31 +1,70 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useDocumentContext, useUIContext } from '../context/EditorContext.jsx';
+import { SvgDoc } from '../model/SvgDoc.js';
 
-/** CodeEditor — collapsible SVG code editor with live preview */
-export default function CodeEditor({ onAddToGallery, editTarget }) {
-  const [open, setOpen] = useState(false);
+/** CodeEditor — collapsible SVG code editor with live preview, powered by Context */
+export default function CodeEditor() {
+  const { state: docState, dispatch } = useDocumentContext();
+  const { state: ui, dispatch: uiDispatch } = useUIContext();
+
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
-  const [addedFlash, setAddedFlash] = useState(false);
-  const [lastEditTs, setLastEditTs] = useState(null);
+  const [flash, setFlash] = useState(null); // 'Added!' | 'Saved!' | null
+  const [prevActiveId, setPrevActiveId] = useState(null);
   const textareaRef = useRef(null);
   const editorSectionRef = useRef(null);
 
-  // Adjust state when editTarget prop changes (React recommended pattern)
-  if (editTarget && editTarget._ts !== lastEditTs) {
-    setLastEditTs(editTarget._ts);
-    setCode(editTarget.src);
-    setName(editTarget.name);
-    setOpen(true);
+  const { documents, activeDocumentId } = docState;
+  const isEditing = activeDocumentId !== null;
+  const activeDoc = isEditing
+    ? documents.find((d) => d.id === activeDocumentId)
+    : null;
+
+  // Sync code/name when activeDocumentId changes
+  if (activeDocumentId !== prevActiveId) {
+    setPrevActiveId(activeDocumentId);
+    if (activeDoc) {
+      setCode(activeDoc.history.current);
+      setName(activeDoc.name);
+    }
   }
 
-  // Scroll to editor when editTarget changes (side-effect)
+  // Scroll to editor when editing target changes
   useEffect(() => {
-    if (editTarget && open) {
+    if (activeDoc && ui.editorOpen) {
       editorSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [lastEditTs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeDocumentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isValidSvg = code.trim().includes('<svg') && code.trim().includes('</svg>');
+
+  // QW-4: SVG metadata
+  const metadata = (() => {
+    if (!isValidSvg) return null;
+    try {
+      const doc = SvgDoc.parse(code);
+      return doc.getStats();
+    } catch {
+      return null;
+    }
+  })();
+
+  const handleSubmit = useCallback(() => {
+    if (!code.trim() || !code.includes('<svg')) return;
+
+    if (isEditing && activeDocumentId) {
+      // QW-1: Save changes to existing document
+      dispatch({ type: 'REPLACE_DOCUMENT', id: activeDocumentId, src: code });
+      setFlash('Saved!');
+    } else {
+      // QW-1: Add new document
+      const svgName = name.trim() || 'custom-' + (Date.now() % 10000);
+      dispatch({ type: 'ADD_DOCUMENT', name: svgName, src: code });
+      setName('');
+      setFlash('Added!');
+    }
+    setTimeout(() => setFlash(null), 1200);
+  }, [code, isEditing, activeDocumentId, name, dispatch]);
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -36,27 +75,26 @@ export default function CodeEditor({ onAddToGallery, editTarget }) {
         const end = ta.selectionEnd;
         const newVal = code.substring(0, start) + '  ' + code.substring(end);
         setCode(newVal);
-        // Restore cursor position after React re-render
         requestAnimationFrame(() => {
           ta.selectionStart = ta.selectionEnd = start + 2;
         });
       }
+      // QW-5: Ctrl+Enter / Cmd+Enter to submit
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        handleSubmit();
+      }
     },
-    [code],
+    [code, handleSubmit],
   );
-
-  const handleAdd = () => {
-    if (!code.trim() || !code.includes('<svg')) return;
-    const svgName = name.trim() || 'custom-' + (Date.now() % 10000);
-    onAddToGallery({ name: svgName, src: code });
-    setName('');
-    setAddedFlash(true);
-    setTimeout(() => setAddedFlash(false), 1200);
-  };
 
   const handleClear = () => {
     setCode('');
     setName('');
+  };
+
+  const handleToggle = () => {
+    uiDispatch({ type: 'TOGGLE_EDITOR' });
   };
 
   const statusText = !code.trim()
@@ -70,13 +108,18 @@ export default function CodeEditor({ onAddToGallery, editTarget }) {
       ? 'status valid'
       : 'status invalid';
 
+  const formatBytes = (bytes) => {
+    if (bytes < 1024) return `${bytes} B`;
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  };
+
   return (
     <div className="editor-section" ref={editorSectionRef}>
-      <button className="editor-toggle" onClick={() => setOpen(!open)}>
+      <button className="editor-toggle" onClick={handleToggle}>
         <span>Code Editor &mdash; paste or write SVG code with live preview</span>
-        <span className={`chevron${open ? ' open' : ''}`}>&#9654;</span>
+        <span className={`chevron${ui.editorOpen ? ' open' : ''}`}>&#9654;</span>
       </button>
-      <div className={`editor-body${open ? ' open' : ''}`}>
+      <div className={`editor-body${ui.editorOpen ? ' open' : ''}`}>
         <div className="editor-layout">
           <div className="editor-pane">
             <div className="editor-pane-header">
@@ -115,6 +158,20 @@ export default function CodeEditor({ onAddToGallery, editTarget }) {
             </div>
           </div>
         </div>
+        {/* QW-4: Metadata bar */}
+        {metadata && (
+          <div className="svg-metadata" data-testid="svg-metadata">
+            {metadata.dimensions.width && metadata.dimensions.height && (
+              <span>{metadata.dimensions.width} x {metadata.dimensions.height}</span>
+            )}
+            {metadata.dimensions.viewBox && (
+              <span>viewBox: {metadata.dimensions.viewBox}</span>
+            )}
+            <span>{metadata.elementCount} elements</span>
+            <span>{metadata.animationCount} animations</span>
+            <span>{formatBytes(metadata.sizeBytes)}</span>
+          </div>
+        )}
         <div className="editor-actions">
           <input
             type="text"
@@ -123,12 +180,13 @@ export default function CodeEditor({ onAddToGallery, editTarget }) {
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-          <button className="primary" onClick={handleAdd}>
-            {addedFlash ? 'Added!' : 'Add to Gallery'}
+          <button className="primary" onClick={handleSubmit}>
+            {flash || (isEditing ? 'Save Changes' : 'Add to Gallery')}
           </button>
           <button onClick={handleClear}>Clear</button>
           <span className="spacer" />
-          <span className="hint">Edits update the preview in real time</span>
+          {/* QW-5: Ctrl+Enter hint */}
+          <span className="hint">Ctrl+Enter to submit</span>
         </div>
       </div>
     </div>
