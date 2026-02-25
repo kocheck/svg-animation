@@ -375,3 +375,10 @@ header .count {
   font-size: 11px;
   color: var(--text-dim);
 }
+
+/* --- Preview background modes (QW-3) --- */
+.preview-bg-dark { background: #0a0a0a; }
+.preview-bg-light { background: #ffffff; }
+.preview-bg-checker {
+  background: repeating-conic-gradient(#e0e0e0 0% 25%, #fff 0% 50%) 0 0 / 16px 16px;
+}
