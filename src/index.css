@@ -510,3 +510,33 @@ header .count {
   vertical-align: middle;
   line-height: 1;
 }
+
+/* --- Attribute Editor --- */
+.attr-value { position: relative; cursor: default; }
+.attr-value input, .attr-value select {
+  background: #0d0d0d;
+  border: 1px solid #555;
+  color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  padding: 1px 4px;
+  width: 100%;
+  border-radius: 2px;
+  outline: none;
+}
+.attr-value input:focus, .attr-value select:focus {
+  border-color: #7ec8e3;
+}
+.color-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid #555;
+  vertical-align: middle;
+  margin-right: 6px;
+  cursor: pointer;
+}
+.attr-value-text {
+  vertical-align: middle;
+}
