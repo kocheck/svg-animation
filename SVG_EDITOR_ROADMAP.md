@@ -6,7 +6,14 @@
 
 ## 1. Executive Summary
 
-We're evolving our lean SVG animation viewer into a dual-mode editing workbench where users can **manually tweak** any visual or animation property through direct-manipulation controls, **or use any AI client** (Claude Desktop, Raycast, Cursor, etc.) to drive edits via an MCP server that exposes the editor's capabilities as structured tools. The AI never lives inside the app — it connects from outside through MCP, keeping the editor focused on what it does best: visual SVG manipulation. Both manual controls and MCP tool calls share a single structured SVG model, keeping output as portable, valid SVG at all times. The build-out is phased so that each milestone ships standalone value — starting with foundational infrastructure, then layering in visual controls, MCP-powered AI integration, advanced timeline tools, and finally export/polish.
+We're evolving our lean SVG animation viewer into a dual-mode editing workbench where users can **manually tweak** any visual or animation property through direct-manipulation controls, **or use any AI client** (Claude Desktop, Raycast, Cursor, etc.) to drive edits via MCP tools. The AI never lives inside the app — it connects from outside through MCP, keeping the editor focused on what it does best: visual SVG manipulation.
+
+**The app is hosted on Vercel**, which enables a **two-tier MCP architecture:**
+
+- **Tier 1 — Remote MCP (Vercel-hosted, zero setup):** Stateless AI tools deployed as a Next.js API route. Users point any MCP client at the deployed URL and immediately get tools like `analyze_svg`, `transform_svg`, `optimize_svg`, and `convert_to_vector_drawable`. No local process, no installation — just a URL. These tools accept SVG source as input and return processed output, using `linkedom` for server-side SVG parsing.
+- **Tier 2 — Local MCP (live browser editing):** Stateful tools that read and write the live editor state in real-time via a WebSocket bridge. Power users run a local Node.js MCP server to get tools like `modify_element`, `add_animation`, and `undo/redo` that update the browser preview instantly. This tier depends on the Phase 1 document model.
+
+Both manual controls and MCP tool calls share the same structured SVG model, keeping output as portable, valid SVG at all times. The build-out is phased so that each milestone ships standalone value — starting with foundational infrastructure, then layering in visual controls, MCP-powered AI integration, advanced timeline tools, and finally export/polish.
 
 ---
 
@@ -203,35 +210,163 @@ A panel of pre-built easing curves that users can click to apply to the selected
 
 ---
 
-## 5. Phase 3 — AI-Assisted Editing via MCP Server
+## 5. Phase 3 — AI-Assisted Editing via MCP
 
-**Goal:** Expose the editor's capabilities as structured MCP tools so any AI client — Claude Desktop, Raycast, Cursor, Ollama-based tools, or anything that speaks MCP — can read, analyze, and mutate SVGs through the editor. The app stays focused as a visual editor; AI lives outside it.
+**Goal:** Expose SVG editing capabilities as structured MCP tools so any AI client — Claude Desktop, Raycast, Cursor, Ollama-based tools, or anything that speaks MCP — can read, analyze, and mutate SVGs. The app stays focused as a visual editor; AI lives outside it.
+
+This phase is split into two tiers: **Remote (Vercel-hosted)** tools that work out of the box with zero setup, and **Local** tools that provide live browser editing for power users.
 
 ### Architecture Overview
 
 ```
-┌──────────────────┐     MCP Protocol       ┌──────────────┐
-│  Claude Desktop  │    (stdio or SSE)       │              │
-│  Raycast AI      │◄──────────────────────►│  MCP Server  │
-│  Cursor          │                         │  (Node.js)   │
-│  Any MCP Client  │                         │              │
-└──────────────────┘                         └──────┬───────┘
-                                                    │
-                                               WebSocket
-                                              (localhost)
-                                                    │
-                                             ┌──────▼───────┐
-                                             │ Browser App  │
-                                             │ (React SPA)  │
-                                             └──────────────┘
+                              TIER 1 — Remote MCP (Vercel)
+                    ┌────────────────────────────────────────────┐
+                    │                                            │
+┌──────────────────┐│  Streamable HTTP         ┌──────────────┐ │
+│  Claude Desktop  ││  (or mcp-remote          │ Next.js API  │ │
+│  Raycast AI      ││   for stdio clients)     │ Route        │ │
+│  Cursor          │◄─────────────────────────►│ /api/mcp     │ │
+│  Any MCP Client  ││                          │              │ │
+│                  ││                          │ linkedom +   │ │
+│                  ││                          │ mcp-handler  │ │
+└────────┬─────────┘│                          └──────────────┘ │
+         │          └────────────────────────────────────────────┘
+         │
+         │            TIER 2 — Local MCP (optional, live editing)
+         │          ┌────────────────────────────────────────────┐
+         │          │                                            │
+         │          │   stdio            ┌──────────────┐       │
+         └──────────┼───────────────────►│  Local MCP   │       │
+                    │                    │  Server      │       │
+                    │                    │  (Node.js)   │       │
+                    │                    └──────┬───────┘       │
+                    │                           │               │
+                    │                      WebSocket            │
+                    │                     (localhost)           │
+                    │                           │               │
+                    │                    ┌──────▼───────┐       │
+                    │                    │ Browser App  │       │
+                    │                    │ (Next.js)    │       │
+                    │                    └──────────────┘       │
+                    └────────────────────────────────────────────┘
 
-AI says: "call tool modify_element({ id: 'circle1', attrs: { fill: '#ff0000' } })"
-  → MCP Server relays to browser via WebSocket
+Tier 1: AI sends SVG source → Vercel function parses/transforms → returns result
+  (stateless, no browser needed, zero user setup)
+
+Tier 2: AI calls tool → local MCP server relays to browser via WebSocket
   → Browser applies to SvgDoc → pushes to undo history → re-renders
   → Returns confirmation + updated element state to AI
+  (stateful, live preview, requires local process)
 ```
 
-### P3-1: WebSocket Bridge (Browser ↔ MCP Server)
+---
+
+### Phase 3A — Remote MCP Tools (Vercel-Hosted)
+
+**Goal:** Ship a production MCP endpoint at the deployed Vercel URL that any AI client can connect to immediately — no local installation, no configuration beyond a URL. Tools are stateless: they accept SVG source as input, process it server-side using `linkedom`, and return the result.
+
+**Key advantage:** Phase 3A has **no dependency on Phase 1**. It doesn't need the browser-side `SvgDoc` model because it parses SVG server-side. This means it can be built and shipped immediately, even before the foundational editor infrastructure.
+
+#### P3A-1: Next.js Migration
+
+Migrate the app from Vite + React to Next.js App Router. This is needed for the API route that hosts the MCP endpoint, and gives us better Vercel integration overall.
+
+*Technical approach:*
+- Convert `main.jsx` entry point to Next.js App Router layout (`app/layout.jsx` + `app/page.jsx`).
+- Move existing components into the Next.js structure. The app is a client-side SPA, so most components get a `'use client'` directive — no SSR complexity.
+- Replace `vite.config.js` with `next.config.js`. The `BASE_URL` env var goes away (Vercel serves at `/` by default).
+- Update `package.json` scripts: `dev` → `next dev`, `build` → `next build`, etc.
+- Remove the GitHub Pages deploy workflow (`.github/workflows/deploy.yml`) — Vercel handles deployment automatically via its dashboard integration.
+- Verify all existing functionality works identically after migration (CSS animations, SVG rendering, gallery, code editor).
+
+*Priority:* Must-have
+*Risk:* Low — the app is a simple client-side React SPA. Next.js App Router handles this natively with `'use client'` components. No SSR, no data fetching, no routing complexity.
+
+#### P3A-2: MCP API Route Setup
+
+Create the MCP server endpoint as a Next.js API route using Vercel's `mcp-handler` package.
+
+*Technical approach:*
+- Install `mcp-handler`, `@modelcontextprotocol/sdk`, and `zod` as dependencies.
+- Create `app/api/mcp/[transport]/route.js` exporting GET, POST, DELETE handlers via `createMcpHandler`.
+- Register all Tier 1 tools (defined in subsequent items) in the handler's setup function.
+- The endpoint is live at `https://<your-app>.vercel.app/api/mcp` as soon as it deploys.
+- No authentication needed for an open-source tool (add OAuth via `mcp-handler`'s `withMcpAuth` wrapper later if needed).
+
+*Priority:* Must-have
+
+#### P3A-3: MCP Tool — `analyze_svg`
+
+Analyze an SVG's structure and return a comprehensive report — element tree, animation list, size stats, and Android compatibility warnings.
+
+*Technical approach:*
+- Tool input: `{ source: string, includePathData?: boolean }`.
+- Tool output: `{ elementTree, animations, stats: { elementCount, animationCount, sizeBytes, dimensions }, androidWarnings }`.
+- Parse with `linkedom`'s `DOMParser` equivalent. Walk the DOM to build the tree and detect animations (CSS `animation` properties, `<animate*>` elements).
+- Android warnings: check for `filter`, `mask`, complex `clip-path`, `hsl()` colors, SMIL elements, `<script>`, custom fonts.
+- Strip verbose `d` attributes by default; include only when `includePathData: true`.
+
+*Priority:* Must-have
+
+#### P3A-4: MCP Tool — `transform_svg`
+
+Apply structural modifications to an SVG and return the modified source. This is the primary mutation tool for Tier 1.
+
+*Technical approach:*
+- Tool input: `{ source: string, operations: [{ selector, set?, remove?, addChild?, removeElement? }] }`.
+  - Example: `{ source: "<svg>...</svg>", operations: [{ selector: "#circle1", set: { fill: "#ff0000", r: "80" } }] }`
+- Tool output: `{ source: string, modified: boolean, summary: string[], androidWarnings: string[] }`.
+- Parse with `linkedom`, apply each operation in order, serialize back to string.
+- **Validation:** Reject dangerous attributes (`onload`, `onclick` with `javascript:` URIs). Normalize color values to hex for Android compatibility.
+- **Safety:** Return a human-readable summary of changes so the AI and user can verify.
+
+*Priority:* Must-have
+
+#### P3A-5: MCP Tool — `validate_svg`
+
+Parse and validate an SVG string, reporting any errors or potential issues.
+
+*Technical approach:*
+- Tool input: `{ source: string }`.
+- Tool output: `{ valid: boolean, parseErrors?: string[], warnings?: string[], stats: { elementCount, animationCount, sizeBytes } }`.
+- Parse with `linkedom`, check for well-formedness. Additionally check for: missing `viewBox`, missing `xmlns`, deprecated elements, known browser inconsistencies.
+
+*Priority:* Must-have
+
+#### P3A-6: MCP Tool — `optimize_svg`
+
+Optimize and minify an SVG using SVGO.
+
+*Technical approach:*
+- Tool input: `{ source: string, preset?: "default" | "aggressive" }`.
+- Tool output: `{ source: string, originalSize: number, optimizedSize: number, savings: string }`.
+- Run SVGO with a sensible default plugin set. The `"aggressive"` preset enables additional optimizations (merge paths, simplify transforms, remove hidden elements) that may alter appearance.
+
+*Priority:* Must-have
+*Vercel note:* SVGO on large SVGs (>500KB) may approach the 10s function timeout on the free tier. Add a size check and return a warning if the input is too large.
+
+#### P3A-7: MCP Tool — `convert_to_vector_drawable`
+
+Convert an SVG to Android VectorDrawable XML.
+
+*Technical approach:*
+- Tool input: `{ source: string, apiLevel?: number }`.
+- Tool output: `{ xml: string, warnings: string[], unsupportedFeatures: string[] }`.
+- Map SVG elements to VD equivalents: `<path>` → `<path>`, `<group>` → `<group>`, `fill`/`stroke` → `android:fillColor`/`android:strokeColor`, `d` → `android:pathData`.
+- Flag unsupported features (filters, masks, complex gradients, SMIL, `<script>`, CSS animations) with clear warnings.
+- If `apiLevel` is provided, tailor the output and warnings to that level's capabilities.
+
+*Priority:* Must-have (core Android deliverable)
+
+---
+
+### Phase 3B — Local MCP Tools (Live Browser Editing)
+
+**Goal:** For power users who want AI-driven edits to appear live in the browser preview, ship a local Node.js MCP server that bridges MCP tool calls to the running browser app via WebSocket. This tier provides stateful tools that read and write the live editor state.
+
+**Dependency:** Phase 3B depends on Phase 1 (SvgDoc model, undo/redo history, EditorContext). Phase 3A does not.
+
+#### P3B-1: WebSocket Bridge (Browser ↔ MCP Server)
 
 The glue layer. The browser app opens a persistent WebSocket connection to a local server. The server relays MCP tool calls to the browser and returns results.
 
@@ -245,7 +380,7 @@ The glue layer. The browser app opens a persistent WebSocket connection to a loc
 
 *Priority:* Must-have
 
-### P3-2: MCP Tool — `get_svg_source`
+#### P3B-2: MCP Tool — `get_svg_source`
 
 Returns the full serialized SVG markup for the currently active animation.
 
@@ -256,7 +391,7 @@ Returns the full serialized SVG markup for the currently active animation.
 
 *Priority:* Must-have
 
-### P3-3: MCP Tool — `get_element_tree`
+#### P3B-3: MCP Tool — `get_element_tree`
 
 Returns the SVG's DOM structure as a JSON tree — tag names, IDs, classes, key attributes — so the AI can understand what it's working with without parsing raw XML.
 
@@ -267,7 +402,7 @@ Returns the SVG's DOM structure as a JSON tree — tag names, IDs, classes, key 
 
 *Priority:* Must-have
 
-### P3-4: MCP Tool — `get_element_details`
+#### P3B-4: MCP Tool — `get_element_details`
 
 Deep-read a specific element by ID or CSS selector — returns all attributes, computed styles, animation state, and bounding box.
 
@@ -278,21 +413,21 @@ Deep-read a specific element by ID or CSS selector — returns all attributes, c
 
 *Priority:* Must-have
 
-### P3-5: MCP Tool — `modify_element`
+#### P3B-5: MCP Tool — `modify_element`
 
-Set, change, or remove attributes on a specific element. This is the primary mutation tool.
+Set, change, or remove attributes on a specific element. This is the primary mutation tool for live editing.
 
 *Technical approach:*
 - Tool input: `{ selector: string, set?: Record<string,string>, remove?: string[] }`.
   - Example: `{ selector: "#circle1", set: { fill: "#ff0000", r: "80" }, remove: ["opacity"] }`.
 - Tool output: `{ success: boolean, element: { tag, id, attrs } }` (the element's state after mutation).
 - Browser handler: locate element via `SvgDoc.querySelector`, apply `setAttribute`/`removeAttribute`, push to history stack, re-render.
-- **Validation:** Reject obviously dangerous attributes (`onload`, `onclick` with `javascript:` URIs). Normalize color values to hex.
+- **Validation:** Reject dangerous attributes (`onload`, `onclick` with `javascript:` URIs). Normalize color values to hex.
 
 *Priority:* Must-have
-*Android note:* The tool response should include an `androidWarnings: string[]` field listing any attributes the AI just set that are known to be unsupported on Android (e.g., `filter`, `clip-path`, `hsl()` colors). This lets the AI proactively warn the user.
+*Android note:* The tool response should include an `androidWarnings: string[]` field listing any attributes the AI just set that are known to be unsupported on Android (e.g., `filter`, `clip-path`, `hsl()` colors).
 
-### P3-6: MCP Tool — `add_animation`
+#### P3B-6: MCP Tool — `add_animation`
 
 Add a CSS animation to an element — injects a `@keyframes` block and sets the `animation` shorthand.
 
@@ -304,7 +439,7 @@ Add a CSS animation to an element — injects a `@keyframes` block and sets the 
 
 *Priority:* Must-have
 
-### P3-7: MCP Tool — `replace_svg`
+#### P3B-7: MCP Tool — `replace_svg`
 
 Replace the entire SVG source. The nuclear option for when the AI wants to make sweeping changes. Always validated before applying.
 
@@ -312,13 +447,13 @@ Replace the entire SVG source. The nuclear option for when the AI wants to make 
 - Tool input: `{ source: string, validateOnly?: boolean }`.
 - Tool output: `{ success: boolean, valid: boolean, parseErrors?: string[], elementCount: number, animationCount: number }`.
 - Browser handler: parse with `DOMParser`, check for `parsererror`. If `validateOnly` is true, return validation result without applying. Otherwise, replace the `SvgDoc`, push old state to undo history.
-- **Safety:** The tool always returns a diff summary (elements added/removed/changed) so the AI can confirm the change was what it intended.
+- **Safety:** Always returns a diff summary (elements added/removed/changed) so the AI can confirm the change.
 
 *Priority:* Must-have
 
-### P3-8: MCP Tool — `undo` / `redo`
+#### P3B-8: MCP Tool — `undo` / `redo`
 
-Navigate the history stack. Essential for AI error recovery — if a change looks wrong, the AI (or user) can immediately revert.
+Navigate the history stack. Essential for AI error recovery.
 
 *Technical approach:*
 - Tool input: `{ action: "undo" | "redo" }`.
@@ -327,7 +462,7 @@ Navigate the history stack. Essential for AI error recovery — if a change look
 
 *Priority:* Must-have
 
-### P3-9: MCP Tool — `list_animations`
+#### P3B-9: MCP Tool — `list_animations`
 
 List all detected animations in the SVG with their properties — so the AI can reason about timing, sequencing, and conflicts.
 
@@ -338,27 +473,55 @@ List all detected animations in the SVG with their properties — so the AI can 
 
 *Priority:* Nice-to-have
 
-### P3-10: MCP Server Package & Setup
+#### P3B-10: Local MCP Server Package & Setup
 
-Ship the MCP server as a self-contained package within the repo, with a simple setup flow.
+Ship the local MCP server as a self-contained package within the repo.
 
 *Technical approach:*
 - Directory: `mcp-server/` at repo root, with its own `package.json`.
 - Dependencies: `@modelcontextprotocol/sdk`, `ws` (WebSocket library). Minimal footprint.
 - Entry point: `mcp-server/index.js` — runnable via `node mcp-server/index.js` or `npx svg-editor-mcp`.
-- **MCP client configuration:** Ship a sample `claude_desktop_config.json` snippet and a Raycast MCP config example in the README so users can connect in under a minute.
-- **Transport:** Support both `stdio` (for Claude Desktop, which launches the process directly) and `SSE` over HTTP (for network-based MCP clients). The WebSocket to the browser is always localhost.
+- **Transport:** `stdio` (for Claude Desktop, which launches the process directly). The WebSocket to the browser is always localhost.
 - **Zero-config default:** `npm run mcp` script in the root `package.json` starts the server. The browser app auto-connects when it detects the WebSocket is available.
 
 *Priority:* Must-have
 
 ### MCP Configuration Examples
 
-**Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):**
+**Tier 1 — Remote MCP (zero setup, works immediately after deploy):**
+
+Any MCP client that supports Streamable HTTP can connect directly to the deployed URL:
+
+**Cursor / Claude Code / clients with URL support:**
 ```json
 {
   "mcpServers": {
     "svg-editor": {
+      "url": "https://your-app.vercel.app/api/mcp"
+    }
+  }
+}
+```
+
+**Clients that only support stdio (use `mcp-remote` as a bridge):**
+```json
+{
+  "mcpServers": {
+    "svg-editor": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://your-app.vercel.app/api/mcp"]
+    }
+  }
+}
+```
+
+**Tier 2 — Local MCP (for live browser editing):**
+
+**Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):**
+```json
+{
+  "mcpServers": {
+    "svg-editor-local": {
       "command": "node",
       "args": ["/path/to/svg-animation/mcp-server/index.js"]
     }
@@ -369,20 +532,28 @@ Ship the MCP server as a self-contained package within the repo, with a simple s
 **Raycast MCP Extension:**
 ```json
 {
-  "name": "svg-editor",
+  "name": "svg-editor-local",
   "transport": "stdio",
   "command": "node",
   "args": ["/path/to/svg-animation/mcp-server/index.js"]
 }
 ```
 
+> **Tip:** Users can configure *both* tiers simultaneously. The remote tools (analyze, optimize, convert) and local tools (modify, animate, undo) have different names and complement each other.
+
 **What users can say to their AI client after connecting:**
-- "Show me the element tree of my SVG"
-- "Make the circle red and slow down its animation to 3 seconds"
+
+*With Tier 1 (remote):*
+- "Analyze this SVG and tell me what animations it has"
+- "Optimize this SVG for me — make it as small as possible"
+- "Convert this SVG to an Android VectorDrawable"
+- "Change the circle's fill to red and its radius to 80" (via `transform_svg`)
+
+*With Tier 2 (local, live editing):*
+- "Show me the element tree of the SVG in my browser"
+- "Make the circle red — I want to see it update live"
 - "Add a fade-in animation to every path element"
-- "What elements have animations? List them with their durations"
 - "Undo that last change"
-- "Replace the entire SVG with an optimized version"
 
 ---
 
@@ -463,18 +634,19 @@ A library of ready-made animations (fade in, slide up, pulse, spin, bounce, draw
 Clean and minify the SVG output — remove editor metadata, redundant attributes, empty groups, and unnecessary precision.
 
 *Technical approach:*
-- Integrate [SVGO](https://github.com/svg/svgo) as a browser-side dependency (it supports browser builds).
-- Run on export with a sensible default plugin set. Offer an "Advanced" toggle to configure individual SVGO plugins.
-- Show before/after file size comparison.
+- The SVGO processing logic is shared with the `optimize_svg` MCP tool (P3A-6) in `src/mcp-tools/optimizeSvg.js`. The browser UI wraps it with an "Advanced" toggle to configure individual SVGO plugins and a before/after file size comparison.
+- Run on export with a sensible default plugin set. Show before/after file size comparison.
 
 *Priority:* Must-have
+*Note:* If Phase 3A is built first, the core SVGO logic already exists — this task is mainly adding the browser UI wrapper.
 
 ### P5-2: Android Vector Drawable Export
 
 Export the SVG as an Android `VectorDrawable` XML and/or `AnimatedVectorDrawable` XML.
 
 *Technical approach:*
-- Build a converter that maps SVG elements to VectorDrawable equivalents: `<path>` → `<path>`, `<group>` → `<group>`, `fill`/`stroke` → `android:fillColor`/`android:strokeColor`, `d` → `android:pathData`.
+- The VD conversion logic is shared with the `convert_to_vector_drawable` MCP tool (P3A-7) in `src/mcp-tools/convertToVd.js`. The browser UI wraps it with a download button, preview, and feature warnings.
+- Map SVG elements to VectorDrawable equivalents: `<path>` → `<path>`, `<group>` → `<group>`, `fill`/`stroke` → `android:fillColor`/`android:strokeColor`, `d` → `android:pathData`.
 - For animations, generate `<objectAnimator>` blocks targeting path properties.
 - Flag unsupported features (filters, masks, gradients with >2 stops in older API levels, SMIL) with warnings before export.
 - Output as downloadable `.xml` file.
@@ -533,6 +705,18 @@ Ensure the editor works on tablets and narrow viewports.
 
 ### Data Flow
 
+**Tier 1 — Remote MCP (stateless, server-side):**
+```
+AI client ──► Streamable HTTP ──► Vercel API route (/api/mcp)
+                                         │
+                                    linkedom parse
+                                    transform / analyze
+                                    serialize
+                                         │
+                                  ◄──── return result to AI
+```
+
+**Tier 2 — Local MCP (stateful, browser-side):**
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         EditorContext                                 │
@@ -553,7 +737,7 @@ Ensure the editor works on tablets and narrow viewports.
 │  └─────────┘                                                         │
 └──────────────────────────────────────────────────────────────────────┘
 
-Mutation flow (both MCP and manual share the same pipeline):
+Mutation flow (both local MCP and manual share the same pipeline):
 
   Manual: User click ──► Mutation function ──► SvgDoc.update() ──► History.push()
                                                      │
@@ -570,23 +754,33 @@ Mutation flow (both MCP and manual share the same pipeline):
 
 | Decision | Rationale |
 |----------|-----------|
-| **Browser `DOMParser` for SVG model** | Zero dependencies, handles all SVG including embedded `<style>` and `<script>`. More reliable than regex or third-party AST parsers. |
+| **Two-tier MCP (remote + local)** | Remote tier (Vercel serverless) gives zero-setup AI tools — users just need a URL. Local tier (Node.js + WebSocket) gives live browser editing for power users. Both tiers complement each other and can run simultaneously. |
+| **Next.js App Router over Vite** | Enables API routes for the remote MCP endpoint without a separate server. Better Vercel integration (auto-deploys, preview URLs, serverless functions). The app is a simple client-side SPA so migration risk is low. |
+| **`linkedom` for server-side SVG parsing (Tier 1)** | Lightweight DOM implementation for Node.js (~50KB). Provides `DOMParser`, `querySelector`, `setAttribute` — the same API as the browser. Much smaller than `jsdom`. Used in the Vercel serverless functions for stateless SVG processing. |
+| **`mcp-handler` for Vercel MCP endpoint** | Vercel's official MCP adapter. Handles Streamable HTTP transport, connection lifecycle, and optional OAuth. Drop-in for Next.js API routes. |
+| **Browser `DOMParser` for SVG model (Tier 2)** | Zero dependencies, handles all SVG including embedded `<style>` and `<script>`. More reliable than regex or third-party AST parsers. Used in the browser for live editing. |
 | **`useReducer` + Context over Redux/Zustand** | App complexity is moderate. React's built-in primitives are sufficient and keep the zero-dependency philosophy. Revisit if state shape grows beyond ~10 top-level keys. |
 | **String-diff history over structural diff** | Serialized SVG strings are easy to compare, store, and restore. Structural diffing is complex and error-prone with SVG's namespace quirks. String snapshots with a 50-entry cap are memory-safe for typical SVGs (<100KB). |
 | **MCP server (external AI) over built-in chat panel** | Keeps the app focused as a visual editor. Users bring their own AI client (Claude Desktop, Raycast, Cursor). No API keys in the browser, no LLM vendor lock-in, no chat UI to maintain. MCP's structured tool calls are more reliable than asking an LLM to produce raw SVG strings. |
-| **WebSocket bridge for MCP ↔ browser** | MCP servers run as Node.js processes (stdio/SSE), but the editor state lives in the browser. WebSocket is the simplest reliable bridge — persistent, bidirectional, low-latency. Falls back gracefully (app works without it). |
+| **WebSocket bridge for local MCP ↔ browser (Tier 2 only)** | The local MCP server runs as a Node.js process (stdio), but the editor state lives in the browser. WebSocket is the simplest reliable bridge — persistent, bidirectional, low-latency. Falls back gracefully (app works without it). Not needed for Tier 1 (stateless). |
 | **Structured MCP tools over raw SVG replacement** | Tools like `modify_element` and `add_animation` constrain what the AI can do, making mutations predictable and validatable. The `replace_svg` tool is the escape hatch for sweeping changes, but it always validates first. |
-| **No TypeScript migration (yet)** | The codebase is JSX. Adding TS would be valuable long-term but is not a blocker for any phase. Consider migrating incrementally starting Phase 3 when the MCP server adds type complexity (the MCP SDK has good TS support). |
 | **Inline styles over `<style>` blocks for per-element edits** | Inline styles are more predictable when elements are moved, copied, or exported. Reserve `<style>` block editing for `@keyframes` and global rules only. |
 
-### Module Structure (Target)
+### Module Structure (Target — Next.js App Router)
 
 ```
 svg-animation/
-├── src/                               # React app (browser)
-│   ├── main.jsx
-│   ├── App.jsx
-│   ├── index.css
+├── app/                                # Next.js App Router
+│   ├── layout.jsx                     # Root layout (html, body, global CSS)
+│   ├── page.jsx                       # Main page ('use client' — the SPA)
+│   ├── globals.css                    # Global styles (moved from src/index.css)
+│   └── api/
+│       └── mcp/
+│           └── [transport]/
+│               └── route.js           # Tier 1: Remote MCP endpoint (mcp-handler)
+│
+├── src/                               # Shared app code (browser components + logic)
+│   ├── App.jsx                        # Main app component ('use client')
 │   ├── context/
 │   │   └── EditorContext.jsx          # useReducer + Context provider
 │   ├── model/
@@ -594,8 +788,8 @@ svg-animation/
 │   │   ├── SvgHistory.js              # Undo/redo stack
 │   │   └── AnimationDetector.js       # Generalized animation discovery
 │   ├── mcp/
-│   │   ├── useWebSocket.js            # WebSocket connection hook
-│   │   ├── toolDispatcher.js          # Routes MCP tool calls → EditorContext actions
+│   │   ├── useWebSocket.js            # Tier 2: WebSocket connection hook
+│   │   ├── toolDispatcher.js          # Routes local MCP tool calls → EditorContext actions
 │   │   └── connectionStatus.js        # Connection state (connected/disconnected)
 │   ├── components/
 │   │   ├── Header.jsx
@@ -616,9 +810,15 @@ svg-animation/
 │   │   └── shared/
 │   │       ├── CommandPalette.jsx
 │   │       └── ElementTree.jsx
+│   ├── mcp-tools/                     # Tier 1: Remote MCP tool implementations
+│   │   ├── analyzeSvg.js             # analyze_svg — element tree, stats, warnings
+│   │   ├── transformSvg.js           # transform_svg — apply operations, return modified SVG
+│   │   ├── validateSvg.js            # validate_svg — parse and check
+│   │   ├── optimizeSvg.js            # optimize_svg — SVGO processing
+│   │   └── convertToVd.js            # convert_to_vector_drawable — SVG → VD XML
 │   ├── export/
-│   │   ├── svgOptimizer.js            # SVGO wrapper
-│   │   ├── vectorDrawable.js          # Android VD export
+│   │   ├── svgOptimizer.js            # SVGO wrapper (shared with optimize_svg tool)
+│   │   ├── vectorDrawable.js          # Android VD export (shared with convert_to_vd tool)
 │   │   └── animatedPreview.js         # GIF/WebM export
 │   └── hooks/
 │       ├── useAnimation.js            # (existing, to be refactored)
@@ -626,20 +826,24 @@ svg-animation/
 │       ├── useSvgHistory.js
 │       └── useElementSelection.js
 │
-└── mcp-server/                        # MCP server (Node.js, separate process)
-    ├── package.json                   # deps: @modelcontextprotocol/sdk, ws
-    ├── index.js                       # Entry point, stdio + SSE transport
-    ├── tools/
-    │   ├── getSvgSource.js            # get_svg_source tool definition
-    │   ├── getElementTree.js          # get_element_tree tool definition
-    │   ├── getElementDetails.js       # get_element_details tool definition
-    │   ├── modifyElement.js           # modify_element tool definition
-    │   ├── addAnimation.js            # add_animation tool definition
-    │   ├── replaceSvg.js              # replace_svg tool definition
-    │   ├── listAnimations.js          # list_animations tool definition
-    │   └── undoRedo.js                # undo/redo tool definition
-    ├── bridge.js                      # WebSocket client → browser app
-    └── README.md                      # Setup instructions + config examples
+├── mcp-server/                        # Tier 2: Local MCP server (Node.js, separate process)
+│   ├── package.json                   # deps: @modelcontextprotocol/sdk, ws
+│   ├── index.js                       # Entry point, stdio transport
+│   ├── tools/
+│   │   ├── getSvgSource.js            # get_svg_source tool definition
+│   │   ├── getElementTree.js          # get_element_tree tool definition
+│   │   ├── getElementDetails.js       # get_element_details tool definition
+│   │   ├── modifyElement.js           # modify_element tool definition
+│   │   ├── addAnimation.js            # add_animation tool definition
+│   │   ├── replaceSvg.js              # replace_svg tool definition
+│   │   ├── listAnimations.js          # list_animations tool definition
+│   │   └── undoRedo.js                # undo/redo tool definition
+│   ├── bridge.js                      # WebSocket client → browser app
+│   └── README.md                      # Setup instructions + config examples
+│
+├── next.config.js                     # Next.js configuration
+├── package.json                       # deps: next, react, mcp-handler, linkedom, svgo, zod
+└── vercel.json                        # Optional: function timeout overrides, redirects
 ```
 
 ---
@@ -673,20 +877,28 @@ svg-animation/
 | **WebSocket disconnects between MCP server and browser** | AI tool calls fail silently | Implement reconnection with exponential backoff. MCP server queues tool calls during brief disconnects (up to 5s). Return clear error to AI client if browser is unreachable. |
 | **MCP server port conflicts** | Server fails to start | Use a configurable port (default 9500) with automatic fallback to next available port. Write the active port to a `.mcp-port` file for the browser to discover. |
 | **Multiple browser tabs open** | MCP server doesn't know which tab to target | Only one tab maintains the WebSocket connection at a time. Subsequent tabs see a "controlled by another tab" indicator. Or: MCP server uses `activeTab` parameter on tool calls to target a specific gallery entry. |
+| **Vercel function timeout (Tier 1)** | SVGO on large SVGs (>500KB) or complex VD conversions may exceed the 10s timeout on Vercel's free Hobby plan | Add input size checks and return early with a warning if the SVG is too large. Most animated SVGs are well under 500KB. Pro plan extends timeout to 60s if needed. |
+| **`linkedom` vs browser `DOMParser` parity (Tier 1)** | Server-side SVG parsing may produce slightly different results than browser parsing | Test both paths against the same SVGs. `linkedom` handles standard SVG well but may differ on edge cases (malformed XML, exotic namespaces). Use `'image/svg+xml'` MIME type in both. |
+| **Next.js migration breaks existing behavior** | CSS animations, SVG rendering, or gallery behavior may change after Vite → Next.js migration | The app is a simple client-side SPA with `'use client'` components — no SSR involved. Test all existing functionality manually after migration. Keep the migration as a distinct commit for easy rollback. |
 
 ---
 
 ## 10. Phasing Summary
 
-| Phase | Duration Estimate | Key Deliverables | Dependencies |
-|-------|-------------------|------------------|--------------|
-| **Quick Wins** | — | In-place edit, copy, background toggle, metadata, shortcuts | None |
-| **Phase 1: Foundation** | — | SVG document model, undo/redo, element selection, animation detection, state management | None |
-| **Phase 2: Manual Editing** | — | Attribute editor, color picker, transform handles, timing controls, element tree, easing presets | Phase 1 |
-| **Phase 3: AI via MCP** | — | MCP server, WebSocket bridge, 8 structured tools (get/modify/animate/undo), connection indicator | Phase 1 |
-| **Phase 4: Advanced Tools** | — | Keyframe timeline, sequencer, path editor, interaction builder, animation presets | Phase 2 |
-| **Phase 5: Export & Polish** | — | SVG optimizer, VectorDrawable export, animated preview export, command palette, persistence, responsive layout | Phase 1+ |
+| Phase | Key Deliverables | Dependencies |
+|-------|------------------|--------------|
+| **Quick Wins** | In-place edit, copy, background toggle, metadata, shortcuts | None |
+| **Phase 1: Foundation** | SVG document model, undo/redo, element selection, animation detection, state management | None |
+| **Phase 2: Manual Editing** | Attribute editor, color picker, transform handles, timing controls, element tree, easing presets | Phase 1 |
+| **Phase 3A: Remote MCP (Vercel)** | Next.js migration, MCP API route, 5 stateless tools (analyze, transform, validate, optimize, convert to VD) | **None** — can start immediately |
+| **Phase 3B: Local MCP (Live Editing)** | Local Node.js MCP server, WebSocket bridge, 8 stateful tools (get/modify/animate/undo), connection indicator | Phase 1 |
+| **Phase 4: Advanced Tools** | Keyframe timeline, sequencer, path editor, interaction builder, animation presets | Phase 2 |
+| **Phase 5: Export & Polish** | SVG optimizer, VectorDrawable export, animated preview export, command palette, persistence, responsive layout | Phase 1+ |
 
-> **Phases 2 and 3 can be developed in parallel** — they both depend on Phase 1 but are independent of each other. The MCP server (Phase 3) is a separate Node.js package with no dependency on the React component work in Phase 2. Phase 4 depends on Phase 2. Phase 5 items can be sprinkled in alongside any phase (especially persistence, which is valuable early).
+> **Phase 3A is the fast path to AI features.** It has zero dependencies on the editor infrastructure (Phases 1-2) because it parses SVG server-side with `linkedom`. This means you can ship a working MCP endpoint for AI clients right after the Next.js migration — before building the document model, undo/redo, or any manual editing UI.
 >
-> **MCP tools grow with the editor.** As Phase 2 adds capabilities (color picker, transform handles, timing controls), those same capabilities naturally become available through MCP — the tools call the same underlying mutation functions. No separate AI-specific work needed for each new editor feature.
+> **Phases 2 and 3B can be developed in parallel** — they both depend on Phase 1 but are independent of each other. The local MCP server (Phase 3B) is a separate Node.js package with no dependency on the React component work in Phase 2.
+>
+> **MCP tools grow with the editor.** As Phase 2 adds capabilities (color picker, transform handles, timing controls), those same capabilities naturally become available through the local MCP tools (Tier 2) — the tools call the same underlying mutation functions. No separate AI-specific work needed for each new editor feature.
+>
+> **Phase 5 export tools share code with Phase 3A MCP tools.** The `optimize_svg` and `convert_to_vector_drawable` MCP tools use the same SVGO and VD conversion logic that Phase 5 exposes in the browser UI. Building Phase 3A first means Phase 5's export features are partially implemented already.
