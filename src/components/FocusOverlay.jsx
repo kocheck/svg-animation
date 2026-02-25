@@ -1,32 +1,33 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
+import { useDocumentContext, useUIContext } from '../context/EditorContext.jsx';
 import {
   setSpeedOnSvg,
   setStrokeOnSvg,
   togglePauseOnSvg,
 } from '../hooks/useAnimation';
 
-/** FocusOverlay — expanded single-animation view with speed/stroke/pause controls */
-export default function FocusOverlay({
-  svgs,
-  focusIndex,
-  globalSpeed,
-  globalPaused,
-  onClose,
-  onEdit,
-  onNavigate,
-}) {
+/** FocusOverlay — expanded single-animation view with speed/stroke/pause controls, powered by Context */
+export default function FocusOverlay() {
+  const { state: docState, dispatch } = useDocumentContext();
+  const { state: ui, dispatch: uiDispatch } = useUIContext();
+
+  const { documents } = docState;
+  const { focusDocumentId, previewBackground, globalSpeed, paused: globalPaused } = ui;
+
   const svgContainerRef = useRef(null);
   const [speed, setSpeed] = useState(globalSpeed);
   const [stroke, setStroke] = useState(2);
   const [localPaused, setLocalPaused] = useState(globalPaused);
-  const [prevFocus, setPrevFocus] = useState(focusIndex);
+  const [prevFocusId, setPrevFocusId] = useState(focusDocumentId);
 
-  const isOpen = focusIndex >= 0 && focusIndex < svgs.length;
-  const svg = isOpen ? svgs[focusIndex] : null;
+  const isOpen = focusDocumentId !== null;
+  const focusDoc = isOpen
+    ? documents.find((d) => d.id === focusDocumentId)
+    : null;
 
   // Reset controls when focus changes (adjust state during render)
-  if (focusIndex !== prevFocus) {
-    setPrevFocus(focusIndex);
+  if (focusDocumentId !== prevFocusId) {
+    setPrevFocusId(focusDocumentId);
     if (isOpen) {
       setSpeed(globalSpeed);
       setStroke(2);
@@ -36,32 +37,53 @@ export default function FocusOverlay({
 
   // Apply speed to focus SVG after render
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && focusDoc) {
       const svgEl = svgContainerRef.current?.querySelector('svg');
       if (svgEl) {
         setSpeedOnSvg(svgEl, speed, localPaused);
       }
     }
-  }, [isOpen, speed, localPaused, svg]);
+  }, [isOpen, speed, localPaused, focusDoc]);
+
+  // Navigate helpers
+  const currentIndex = focusDoc
+    ? documents.indexOf(focusDoc)
+    : -1;
+
+  const navigateNext = useCallback(() => {
+    if (documents.length === 0) return;
+    const nextIdx = (currentIndex + 1) % documents.length;
+    uiDispatch({ type: 'SET_FOCUS', documentId: documents[nextIdx].id });
+  }, [currentIndex, documents, uiDispatch]);
+
+  const navigatePrev = useCallback(() => {
+    if (documents.length === 0) return;
+    const prevIdx = (currentIndex - 1 + documents.length) % documents.length;
+    uiDispatch({ type: 'SET_FOCUS', documentId: documents[prevIdx].id });
+  }, [currentIndex, documents, uiDispatch]);
+
+  const handleClose = useCallback(() => {
+    uiDispatch({ type: 'CLEAR_FOCUS' });
+  }, [uiDispatch]);
 
   // Keyboard navigation
   const handleKeyDown = useCallback(
     (e) => {
       if (!isOpen) return;
       if (e.key === 'Escape') {
-        onClose();
+        handleClose();
         return;
       }
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
         e.preventDefault();
-        onNavigate((focusIndex + 1) % svgs.length);
+        navigateNext();
       }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
         e.preventDefault();
-        onNavigate((focusIndex - 1 + svgs.length) % svgs.length);
+        navigatePrev();
       }
     },
-    [isOpen, focusIndex, svgs.length, onClose, onNavigate],
+    [isOpen, handleClose, navigateNext, navigatePrev],
   );
 
   useEffect(() => {
@@ -90,28 +112,43 @@ export default function FocusOverlay({
   };
 
   const handleOverlayClick = (e) => {
-    if (e.target.classList.contains('focus-overlay')) onClose();
+    if (e.target.classList.contains('focus-overlay')) handleClose();
   };
 
+  // "Edit Code" => set active + open editor + close overlay
   const handleEdit = () => {
-    if (focusIndex >= 0) onEdit(focusIndex);
+    if (focusDoc) {
+      dispatch({ type: 'SET_ACTIVE', id: focusDoc.id });
+      uiDispatch({ type: 'TOGGLE_EDITOR' });
+      uiDispatch({ type: 'CLEAR_FOCUS' });
+    }
   };
+
+  // QW-2: Copy SVG source
+  const handleCopy = async () => {
+    if (focusDoc) {
+      await navigator.clipboard.writeText(focusDoc.history.current);
+    }
+  };
+
+  const svgSrc = focusDoc ? focusDoc.history.current : '';
 
   return (
     <div
       className={`focus-overlay${isOpen ? ' open' : ''}`}
       onClick={handleOverlayClick}
     >
-      <button className="close-btn" onClick={onClose}>
+      <button className="close-btn" onClick={handleClose}>
         &times;
       </button>
-      <div className="focus-name">{svg?.name}</div>
-      <div className="focus-svg">
-        {svg && (
+      <div className="focus-name">{focusDoc?.name}</div>
+      {/* QW-3: preview background class */}
+      <div className={`focus-svg preview-bg-${previewBackground}`}>
+        {focusDoc && (
           <div
             className="inline-svg"
             ref={svgContainerRef}
-            dangerouslySetInnerHTML={{ __html: svg.src }}
+            dangerouslySetInnerHTML={{ __html: svgSrc }}
           />
         )}
       </div>
@@ -153,7 +190,17 @@ export default function FocusOverlay({
           className="sep"
           style={{ width: 1, height: 20, background: '#2a2a2a' }}
         />
+        {/* QW-2: Copy button */}
+        <button onClick={handleCopy}>Copy SVG</button>
+        <div
+          className="sep"
+          style={{ width: 1, height: 20, background: '#2a2a2a' }}
+        />
         <button onClick={handleEdit}>Edit Code</button>
+      </div>
+      {/* QW-5: Keyboard hints strip */}
+      <div className="keyboard-hints">
+        <span>&larr; &rarr; navigate &middot; Esc close &middot; E edit</span>
       </div>
     </div>
   );

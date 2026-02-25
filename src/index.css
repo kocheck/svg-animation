@@ -76,6 +76,18 @@ header .count {
   background: var(--border);
 }
 
+/* --- Main content layout --- */
+.main-content {
+  display: flex;
+}
+.main-content .gallery {
+  flex: 1;
+  min-width: 0;
+}
+.main-content.with-inspector .inspector-panel {
+  display: block;
+}
+
 /* --- Grid --- */
 .gallery {
   display: grid;
@@ -374,4 +386,114 @@ header .count {
 .editor-actions .hint {
   font-size: 11px;
   color: var(--text-dim);
+}
+
+/* --- Preview background modes (QW-3) --- */
+.preview-bg-dark { background: #0a0a0a; }
+.preview-bg-light { background: #ffffff; }
+.preview-bg-checker {
+  background: repeating-conic-gradient(#e0e0e0 0% 25%, #fff 0% 50%) 0 0 / 16px 16px;
+}
+
+/* --- Inspector Panel --- */
+.inspector-panel {
+  width: 300px;
+  min-width: 300px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.inspector-empty {
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 20px 0;
+  text-align: center;
+}
+
+.inspector-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.inspector-tag {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 14px;
+  color: #7ec8e3;
+}
+
+.inspector-id {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: #c8a87e;
+  font-size: 12px;
+}
+
+.class-pill {
+  display: inline-block;
+  background: #1a2a1a;
+  color: #8cc88c;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.inspector-section {
+  margin-bottom: 16px;
+}
+
+.inspector-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.inspector-attrs {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.inspector-attrs td {
+  padding: 3px 0;
+  vertical-align: top;
+}
+
+.inspector-attrs .attr-key {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: #b8b8ff;
+  font-size: 12px;
+  padding-right: 12px;
+  white-space: nowrap;
+}
+
+.inspector-attrs .attr-value {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: #e0e0e0;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.inspector-breadcrumb {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.breadcrumb-sep {
+  color: #555;
+  margin: 0 2px;
+}
+
+.breadcrumb-tag {
+  color: #7ec8e3;
 }
