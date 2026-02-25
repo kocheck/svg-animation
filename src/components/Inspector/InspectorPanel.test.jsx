@@ -62,7 +62,7 @@ describe('InspectorPanel', () => {
     const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
     renderWithProviders(<InspectorPanel />, opts);
 
-    const table = screen.getByTestId('inspector-attrs');
+    const table = screen.getByTestId('attribute-editor');
     const rows = table.querySelectorAll('tr');
 
     // circle has: id, cx, cy, r, fill, stroke, class = 7 attributes
@@ -99,8 +99,10 @@ describe('InspectorPanel', () => {
     const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
     renderWithProviders(<InspectorPanel />, opts);
 
-    const idBadge = screen.getByText('#c1');
+    const header = document.querySelector('.inspector-header');
+    const idBadge = header.querySelector('.inspector-id');
     expect(idBadge).toBeTruthy();
+    expect(idBadge.textContent).toBe('#c1');
     expect(idBadge.className).toBe('inspector-id');
   });
 
@@ -108,7 +110,8 @@ describe('InspectorPanel', () => {
     const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
     renderWithProviders(<InspectorPanel />, opts);
 
-    const pills = screen.getAllByText(/^\./);
+    // Query specifically for class-pill elements in the header
+    const pills = document.querySelectorAll('.class-pill');
     expect(pills.length).toBe(2);
     expect(pills[0].textContent).toBe('.shape');
     expect(pills[1].textContent).toBe('.primary');
@@ -116,5 +119,23 @@ describe('InspectorPanel', () => {
     pills.forEach(pill => {
       expect(pill.className).toBe('class-pill');
     });
+  });
+
+  it('renders ElementTree when element is selected', () => {
+    const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
+    renderWithProviders(<InspectorPanel />, opts);
+    expect(screen.getByTestId('element-tree')).toBeTruthy();
+  });
+
+  it('renders AttributeEditor when element is selected', () => {
+    const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
+    renderWithProviders(<InspectorPanel />, opts);
+    expect(screen.getByTestId('attribute-editor')).toBeTruthy();
+  });
+
+  it('renders TransformInputs for transformable elements', () => {
+    const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
+    renderWithProviders(<InspectorPanel />, opts);
+    expect(screen.getByTestId('transform-inputs')).toBeTruthy();
   });
 });
