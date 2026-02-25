@@ -1,12 +1,27 @@
-import { useEffect, useRef, useState } from 'react';
-import { useDocumentContext, useUIContext } from '../context/EditorContext.jsx';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { useDocumentContext, useUIContext, useSelectionContext } from '../context/EditorContext.jsx';
+import { useElementSelection } from '../hooks/useElementSelection.js';
 import { setSpeedOnSvg } from '../hooks/useAnimation';
 
 export default function Card({ document: doc }) {
   const { dispatch } = useDocumentContext();
   const { state: ui, dispatch: uiDispatch } = useUIContext();
+  const { dispatch: selectionDispatch } = useSelectionContext();
   const wrapRef = useRef(null);
   const [copiedFlash, setCopiedFlash] = useState(false);
+
+  const onSelect = useCallback((elementId) => {
+    if (elementId) {
+      dispatch({ type: 'SET_ACTIVE', id: doc.id });
+      selectionDispatch({ type: 'SELECT_ELEMENT', elementId });
+    }
+  }, [doc.id, dispatch, selectionDispatch]);
+
+  const onHover = useCallback((elementId) => {
+    selectionDispatch({ type: 'HOVER_ELEMENT', elementId });
+  }, [selectionDispatch]);
+
+  useElementSelection(wrapRef, { onSelect, onHover });
 
   useEffect(() => {
     const svgEl = wrapRef.current?.querySelector('svg');
@@ -25,6 +40,9 @@ export default function Card({ document: doc }) {
 
   const handleClick = (e) => {
     if (e.target.closest('.remove-btn') || e.target.closest('.edit-btn') || e.target.closest('.copy-btn')) return;
+    // If clicking on an SVG element with data-svgdoc-id, selection is handled by useElementSelection
+    const svgEl = e.target.closest('[data-svgdoc-id]');
+    if (svgEl && svgEl.tagName !== 'svg' && svgEl.localName !== 'svg') return;
     uiDispatch({ type: 'SET_FOCUS', documentId: doc.id });
   };
 
