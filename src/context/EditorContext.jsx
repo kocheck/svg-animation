@@ -72,6 +72,37 @@ function documentReducer(state, action) {
       return { ...state, documents };
     }
 
+    case 'BATCH_START': {
+      const { id } = action;
+      const documents = state.documents.map((d) => {
+        if (d.id !== id) return d;
+        const history = d.history.beginBatch();
+        return { ...d, history };
+      });
+      return { ...state, documents };
+    }
+
+    case 'BATCH_UPDATE': {
+      const { id, src } = action;
+      const documents = state.documents.map((d) => {
+        if (d.id !== id) return d;
+        const doc = SvgDoc.parse(src);
+        return { ...d, doc };
+      });
+      return { ...state, documents };
+    }
+
+    case 'BATCH_COMMIT': {
+      const { id } = action;
+      const documents = state.documents.map((d) => {
+        if (d.id !== id) return d;
+        const src = d.doc.serialize();
+        const history = d.history.commitBatch(src);
+        return { ...d, history };
+      });
+      return { ...state, documents };
+    }
+
     default:
       return state;
   }
