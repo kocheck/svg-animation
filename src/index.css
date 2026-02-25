@@ -76,6 +76,18 @@ header .count {
   background: var(--border);
 }
 
+/* --- Main content layout --- */
+.main-content {
+  display: flex;
+}
+.main-content .gallery {
+  flex: 1;
+  min-width: 0;
+}
+.main-content.with-inspector .inspector-panel {
+  display: block;
+}
+
 /* --- Grid --- */
 .gallery {
   display: grid;
