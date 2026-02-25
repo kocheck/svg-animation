@@ -121,8 +121,8 @@ function selectionReducer(state, action) {
   }
 }
 
-export function SelectionProvider({ children }) {
-  const [state, dispatch] = useReducer(selectionReducer, SELECTION_INITIAL_STATE);
+export function SelectionProvider({ children, initialState }) {
+  const [state, dispatch] = useReducer(selectionReducer, initialState ?? SELECTION_INITIAL_STATE);
   return (
     <SelectionContext.Provider value={{ state, dispatch }}>
       {children}
