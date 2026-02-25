@@ -12,6 +12,7 @@ import {
 
 const SVG_A = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>';
 const SVG_B = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="2"/></svg>';
+const SVG_C = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="3"/></svg>';
 
 // ---------------------------------------------------------------------------
 // DocumentContext
@@ -87,6 +88,38 @@ describe('DocumentContext', () => {
         <button
           data-testid="set-active"
           onClick={() => dispatch({ type: 'SET_ACTIVE', id: 'some-id' })}
+        />
+        <button
+          data-testid="batch-start"
+          onClick={() =>
+            dispatch({ type: 'BATCH_START', id: state.activeDocumentId })
+          }
+        />
+        <button
+          data-testid="batch-update"
+          onClick={() =>
+            dispatch({
+              type: 'BATCH_UPDATE',
+              id: state.activeDocumentId,
+              src: SVG_B,
+            })
+          }
+        />
+        <button
+          data-testid="batch-update-2"
+          onClick={() =>
+            dispatch({
+              type: 'BATCH_UPDATE',
+              id: state.activeDocumentId,
+              src: SVG_C,
+            })
+          }
+        />
+        <button
+          data-testid="batch-commit"
+          onClick={() =>
+            dispatch({ type: 'BATCH_COMMIT', id: state.activeDocumentId })
+          }
         />
       </div>
     );
@@ -239,6 +272,39 @@ describe('DocumentContext', () => {
       </DocumentProvider>,
     );
     expect(screen.getByTestId('active-id').textContent).toBe('preset-id');
+  });
+
+  it('BATCH_START + BATCH_UPDATE + BATCH_COMMIT creates single undo entry', () => {
+    const { getByTestId } = render(
+      <DocumentProvider><DocConsumer /></DocumentProvider>,
+    );
+    act(() => getByTestId('add').click());
+
+    // Start batch
+    act(() => getByTestId('batch-start').click());
+    // Batch update twice
+    act(() => getByTestId('batch-update').click());
+    act(() => getByTestId('batch-update-2').click());
+    // Commit batch
+    act(() => getByTestId('batch-commit').click());
+
+    // Should have only 1 undo entry (not 2)
+    expect(getByTestId('can-undo').textContent).toBe('true');
+    act(() => getByTestId('undo').click());
+    expect(getByTestId('can-undo').textContent).toBe('false');
+    // After undo, should be back to original SVG_A
+    expect(getByTestId('active-src').textContent).toBe(SVG_A);
+  });
+
+  it('BATCH_UPDATE without BATCH_START only updates doc, not history', () => {
+    const { getByTestId } = render(
+      <DocumentProvider><DocConsumer /></DocumentProvider>,
+    );
+    act(() => getByTestId('add').click());
+    act(() => getByTestId('batch-update').click());
+    // BATCH_UPDATE only sets the doc field (live preview) without pushing
+    // to history, so canUndo remains false.
+    expect(getByTestId('can-undo').textContent).toBe('false');
   });
 
   it('throws when useDocumentContext is used outside provider', () => {

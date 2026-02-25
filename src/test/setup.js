@@ -12,6 +12,7 @@ Object.defineProperty(navigator, 'clipboard', {
     readText: vi.fn().mockResolvedValue(''),
   },
   writable: true,
+  configurable: true,
 });
 
 // Mock crypto.randomUUID if not available

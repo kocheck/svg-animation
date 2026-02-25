@@ -62,7 +62,7 @@ describe('InspectorPanel', () => {
     const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
     renderWithProviders(<InspectorPanel />, opts);
 
-    const table = screen.getByTestId('inspector-attrs');
+    const table = screen.getByTestId('attribute-editor');
     const rows = table.querySelectorAll('tr');
 
     // circle has: id, cx, cy, r, fill, stroke, class = 7 attributes
@@ -99,8 +99,10 @@ describe('InspectorPanel', () => {
     const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
     renderWithProviders(<InspectorPanel />, opts);
 
-    const idBadge = screen.getByText('#c1');
+    const header = document.querySelector('.inspector-header');
+    const idBadge = header.querySelector('.inspector-id');
     expect(idBadge).toBeTruthy();
+    expect(idBadge.textContent).toBe('#c1');
     expect(idBadge.className).toBe('inspector-id');
   });
 
@@ -108,7 +110,8 @@ describe('InspectorPanel', () => {
     const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
     renderWithProviders(<InspectorPanel />, opts);
 
-    const pills = screen.getAllByText(/^\./);
+    // Query specifically for class-pill elements in the header
+    const pills = document.querySelectorAll('.class-pill');
     expect(pills.length).toBe(2);
     expect(pills[0].textContent).toBe('.shape');
     expect(pills[1].textContent).toBe('.primary');
@@ -116,5 +119,53 @@ describe('InspectorPanel', () => {
     pills.forEach(pill => {
       expect(pill.className).toBe('class-pill');
     });
+  });
+
+  it('renders ElementTree when element is selected', () => {
+    const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
+    renderWithProviders(<InspectorPanel />, opts);
+    expect(screen.getByTestId('element-tree')).toBeTruthy();
+  });
+
+  it('renders AttributeEditor when element is selected', () => {
+    const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
+    renderWithProviders(<InspectorPanel />, opts);
+    expect(screen.getByTestId('attribute-editor')).toBeTruthy();
+  });
+
+  it('renders TransformInputs for transformable elements', () => {
+    const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
+    renderWithProviders(<InspectorPanel />, opts);
+    expect(screen.getByTestId('transform-inputs')).toBeTruthy();
+  });
+
+  it('does not render TimingControls when no animations are present', () => {
+    const opts = makeDocAndSelection(SIMPLE_SVG, 'c1');
+    renderWithProviders(<InspectorPanel />, opts);
+    // happy-dom doesn't support getComputedStyle, so detectAnimations returns nothing.
+    // TimingControls should not be rendered.
+    expect(screen.queryByText('Timing')).toBeNull();
+  });
+
+  it('does not render TimingControls for non-transformable tag without animations', () => {
+    const svgWithText = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+      <text id="t1" x="10" y="20">Hello</text>
+    </svg>`;
+    const opts = makeDocAndSelection(svgWithText, 't1');
+    renderWithProviders(<InspectorPanel />, opts);
+    expect(screen.queryByText('Timing')).toBeNull();
+  });
+
+  it('renders element without id or class attributes', () => {
+    const svgNoIdClass = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+      <circle id="c2" cx="10" cy="10" r="5"/>
+    </svg>`;
+    const opts = makeDocAndSelection(svgNoIdClass, 'c2');
+    renderWithProviders(<InspectorPanel />, opts);
+    const tagEl = screen.getByTestId('inspector-tag');
+    expect(tagEl.textContent).toBe('<circle>');
+    // No class pills should be present
+    const pills = document.querySelectorAll('.class-pill');
+    expect(pills.length).toBe(0);
   });
 });
