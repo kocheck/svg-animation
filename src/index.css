@@ -573,3 +573,33 @@ header .count {
   outline: none;
 }
 .color-hex-input:focus { border-color: #7ec8e3; }
+
+/* --- Transform Inputs --- */
+.transform-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.transform-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.transform-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.transform-field input {
+  background: #0d0d0d;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  outline: none;
+  width: 100%;
+}
+.transform-field input:focus { border-color: #7ec8e3; }
