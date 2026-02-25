@@ -29,7 +29,7 @@ export default function Card({ document: doc }) {
       svgEl.style.animationPlayState = ui.paused ? 'paused' : 'running';
       setSpeedOnSvg(svgEl, ui.globalSpeed, ui.paused);
     }
-  }, [ui.globalSpeed, ui.paused, doc.history.current]);
+  }, [ui.globalSpeed, ui.paused, doc.doc]);
 
   const handleCopy = async (e) => {
     e.stopPropagation();
@@ -60,7 +60,7 @@ export default function Card({ document: doc }) {
   return (
     <div className="card" onClick={handleClick}>
       <div className={`svg-wrap preview-bg-${ui.previewBackground}`} data-testid={`svg-wrap-${doc.id}`}>
-        <div className="inline-svg" ref={wrapRef} dangerouslySetInnerHTML={{ __html: doc.history.current }} />
+        <div className="inline-svg" ref={wrapRef} dangerouslySetInnerHTML={{ __html: doc.doc.serializeWithIds() }} />
       </div>
       <div className="card-label">
         <span>{doc.name}</span>

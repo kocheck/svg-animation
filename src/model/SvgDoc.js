@@ -68,6 +68,10 @@ export class SvgDoc {
     return new XMLSerializer().serializeToString(clone);
   }
 
+  serializeWithIds() {
+    return new XMLSerializer().serializeToString(this.#doc.documentElement);
+  }
+
   clone() { return SvgDoc.parse(this.serialize()); }
 
   getStats() {
