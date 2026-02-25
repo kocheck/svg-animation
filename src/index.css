@@ -686,3 +686,34 @@ header .count {
   background: #7ec8e3;
   animation: easing-slide 1.5s alternate infinite;
 }
+
+/* --- Element Tree --- */
+.element-tree {
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 2px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tree-node:hover { background: rgba(255, 255, 255, 0.05); }
+.tree-node-selected { background: rgba(126, 200, 227, 0.15); }
+.tree-toggle {
+  width: 14px;
+  text-align: center;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  user-select: none;
+}
+.tree-toggle-spacer { width: 14px; flex-shrink: 0; }
+.tree-tag { color: #7ec8e3; }
+.tree-id { color: #c8a87e; font-size: 11px; }
+.tree-class { color: #8cc88c; font-size: 11px; }
