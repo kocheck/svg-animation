@@ -497,3 +497,16 @@ header .count {
 .breadcrumb-tag {
   color: #7ec8e3;
 }
+
+/* --- Android Warning --- */
+.android-warning {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #c8a832;
+  font-size: 12px;
+  margin-left: 4px;
+  cursor: help;
+  vertical-align: middle;
+  line-height: 1;
+}
