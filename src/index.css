@@ -540,3 +540,36 @@ header .count {
 .attr-value-text {
   vertical-align: middle;
 }
+
+/* --- Color Picker --- */
+.color-picker-popover {
+  position: absolute;
+  z-index: 50;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+.color-picker-popover .react-colorful {
+  width: 180px;
+  height: 160px;
+}
+.color-picker-input-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+}
+.color-hex-input {
+  flex: 1;
+  background: #0d0d0d;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  outline: none;
+}
+.color-hex-input:focus { border-color: #7ec8e3; }
